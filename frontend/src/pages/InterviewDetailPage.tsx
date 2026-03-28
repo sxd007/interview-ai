@@ -156,6 +156,15 @@ export function InterviewDetailPage() {
             ) : null}
               {(interview.status === 'queued' || interview.status === 'processing' || interview.status === 'completed') && (
                 <>
+                  {interview.status === 'completed' && (
+                    <Button
+                      type="primary"
+                      icon={<PlayCircleOutlined />}
+                      onClick={() => navigate(`/interviews/${id}/play`)}
+                    >
+                      播放器
+                    </Button>
+                  )}
                   <Button
                     icon={<EditOutlined />}
                     onClick={() => navigate(`/interviews/${id}/pipeline`)}

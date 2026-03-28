@@ -26,6 +26,7 @@ export interface Interview {
   chunk_duration?: number
   chunk_count?: number
   is_chunked?: boolean
+  video_url?: string
 }
 
 export interface VideoChunk {

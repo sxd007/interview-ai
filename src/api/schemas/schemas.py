@@ -57,6 +57,7 @@ class InterviewResponse(InterviewBase):
     chunk_count: Optional[int] = None
     is_chunked: bool = False
     updated_at: datetime
+    video_url: Optional[str] = None
 
 
 class InterviewListResponse(BaseModel):

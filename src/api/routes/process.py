@@ -700,7 +700,8 @@ async def get_transcript(interview_id: str, db: Session = Depends(get_db)):
         )
 
     chunks = db.query(VideoChunk).filter(VideoChunk.interview_id == interview_id).all()
-    completed_chunk_ids = [c.id for c in chunks if c.status == ChunkStatus.REVIEW_PENDING.value]
+    # Include chunks that are either REVIEW_PENDING (waiting for review) or REVIEW_COMPLETED (reviewed)
+    completed_chunk_ids = [c.id for c in chunks if c.status in (ChunkStatus.REVIEW_PENDING.value, ChunkStatus.REVIEW_COMPLETED.value)]
 
     if not completed_chunk_ids:
         raise HTTPException(
@@ -708,9 +709,15 @@ async def get_transcript(interview_id: str, db: Session = Depends(get_db)):
             detail="No chunk has completed processing yet",
         )
 
+    # Auto-merge speakers with same label across chunks
+    from src.services.pipeline.cascade_engine import merge_speakers_by_label
+    merge_speakers_by_label(db, interview_id)
+
+    # Only return speakers that haven't been merged into another speaker
     speakers = db.query(Speaker).filter(
         Speaker.interview_id == interview_id,
-        Speaker.chunk_id.in_(completed_chunk_ids)
+        Speaker.chunk_id.in_(completed_chunk_ids),
+        Speaker.merged_into == None  # Exclude merged speakers
     ).all()
     segments = (
         db.query(AudioSegment)

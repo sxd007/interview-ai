@@ -231,4 +231,60 @@ export const reportApi = {
   },
 }
 
+export interface FusionSummary {
+  speaker_id: string
+  speaker_label: string
+  speaker_color: string
+  segment_count: number
+  total_duration: number
+  prosody: {
+    pitch_mean: number
+    pitch_std: number
+    speech_rate: number
+    pause_ratio: number
+    filler_count: number
+  }
+  emotion: {
+    dominant_emotion: string
+    emotion_counts: Record<string, number>
+    segment_count: number
+  }
+}
+
+export interface FusionAnalysis {
+  speaker_summaries: FusionSummary[]
+  interview_summary: {
+    total_segments: number
+    total_face_frames: number
+    speaker_count: number
+  }
+}
+
+export interface PipelineStage {
+  id: string
+  name: string
+  label: string
+  label_en: string
+  description: string
+  status: string
+  progress: number
+  depends_on: string[]
+  affects: string[]
+  started_at?: string
+  completed_at?: string
+  error_message?: string
+  result_summary?: Record<string, unknown>
+}
+
+export const pipelineApi = {
+  runStage: (id: string, stageName: string) =>
+    api.post(`/interviews/${id}/pipeline/${stageName}/run`),
+
+  getFusion: (id: string) =>
+    api.get<FusionAnalysis>(`/interviews/${id}/analysis/fusion`),
+
+  getStages: (id: string) =>
+    api.get<{ stages: PipelineStage[] }>(`/interviews/${id}/pipeline`),
+}
+
 export default api

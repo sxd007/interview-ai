@@ -130,6 +130,94 @@ def apply_speaker_merge(
     }
 
 
+def merge_speakers_by_label(db: Session, interview_id: str) -> Dict[str, Any]:
+    """
+    Merge speakers across all chunks that have the same label.
+    This is called when all chunks are reviewed to consolidate duplicate speaker names.
+    """
+    all_speakers = db.query(Speaker).filter(
+        Speaker.interview_id == interview_id,
+    ).all()
+    
+    if not all_speakers:
+        return {"merged_groups": 0, "speakers_merged": 0}
+    
+    from src.utils.logging import get_logger
+    logger = get_logger(__name__)
+    print(f"[merge_speakers_by_label] ========== START for interview {interview_id} ==========")
+    print(f"[merge_speakers_by_label] Found {len(all_speakers)} speakers")
+    logger.info(f"[merge_speakers_by_label] Found {len(all_speakers)} speakers for interview {interview_id}")
+    
+    if not all_speakers:
+        print("[merge_speakers_by_label] No speakers found, returning early")
+        return {"merged_groups": 0, "speakers_merged": 0}
+    
+    # Debug: print all speaker labels
+    all_labels = set(sp.label for sp in all_speakers if sp.label)
+    print(f"[merge_speakers_by_label] All unique labels: {all_labels}")
+    logger.info(f"[merge_speakers_by_label] All labels: {all_labels}")
+    
+    # Debug: print speakers grouped by label
+    for label in all_labels:
+        speakers_with_label = [sp for sp in all_speakers if sp.label == label]
+        if len(speakers_with_label) > 1:
+            print(f"[merge_speakers_by_label] Label '{label}' has {len(speakers_with_label)} speakers: {[sp.id for sp in speakers_with_label]}")
+            logger.info(f"[merge_speakers_by_label] Label '{label}' has {len(speakers_with_label)} speakers")
+    
+    # Don't skip merged_into, we need to re-merge if needed
+    label_to_speakers: Dict[str, List[Speaker]] = {}
+    for sp in all_speakers:
+        label = sp.label or "Unknown"
+        if label not in label_to_speakers:
+            label_to_speakers[label] = []
+        label_to_speakers[label].append(sp)
+    
+    # Reset merged_into for speakers that will be re-merged
+    for label, speakers in label_to_speakers.items():
+        if len(speakers) > 1:
+            print(f"[merge_speakers_by_label] Will re-merge label '{label}' with {len(speakers)} speakers")
+            for sp in speakers:
+                sp.merged_into = None  # Reset previous merge
+    
+    print(f"[merge_speakers_by_label] label_to_speakers counts: {[(k, len(v)) for k, v in label_to_speakers.items()]}")
+    
+    logger.info(f"[merge_speakers_by_label] label_to_speakers: {[(k, len(v)) for k, v in label_to_speakers.items()]}")
+    
+    speakers_merged = 0
+    merged_groups = 0
+    
+    for label, speakers in label_to_speakers.items():
+        if len(speakers) <= 1:
+            continue
+        
+        merged_groups += 1
+        target_speaker = speakers[0]
+        print(f"[merge_speakers_by_label] >>> MERGING {len(speakers)} speakers with label '{label}' into {target_speaker.id}")
+        logger.info(f"[merge_speakers_by_label] Merging {len(speakers)} speakers with label '{label}' into {target_speaker.id}")
+        
+        for speaker in speakers[1:]:
+            segments = db.query(AudioSegment).filter(
+                AudioSegment.speaker_id == speaker.id,
+            ).all()
+            print(f"[merge_speakers_by_label] Reassigning {len(segments)} segments from {speaker.id[:8]} to {target_speaker.id[:8]}")
+            logger.info(f"[merge_speakers_by_label] Reassigning {len(segments)} segments from {speaker.id} to {target_speaker.id}")
+            
+            for seg in segments:
+                seg.speaker_id = target_speaker.id
+            
+            speaker.merged_into = target_speaker.id
+            speakers_merged += 1
+    
+    db.commit()
+    
+    print(f"[merge_speakers_by_label] <<< Result: merged_groups={merged_groups}, speakers_merged={speakers_merged}")
+    logger.info(f"[merge_speakers_by_label] Result: merged_groups={merged_groups}, speakers_merged={speakers_merged}")
+    return {
+        "merged_groups": merged_groups,
+        "speakers_merged": speakers_merged,
+    }
+
+
 def apply_speaker_rename(
     db: Session,
     speaker_id: str,

@@ -82,6 +82,13 @@ export function PipelinePage() {
     refetchInterval: 5000,
   })
 
+  const { data: pipelineData } = useQuery({
+    queryKey: ['pipeline', id],
+    queryFn: () => api.get(`/interviews/${id}/pipeline`).then(r => r.data),
+    enabled: !!id,
+    refetchInterval: 5000,
+  })
+
   const runAllChunksMutation = useMutation({
     mutationFn: () => 
       api.post(`/interviews/${id}/process`, { 
@@ -279,39 +286,59 @@ export function PipelinePage() {
                 style={{ marginBottom: 16 }}
               />
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
-                {['prosody', 'emotion', 'fusion'].map((stageName) => {
-                  const stageLabel = { prosody: '韵律分析', emotion: '情绪识别', fusion: '情绪融合' }[stageName] || stageName
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
+                {['face_analysis', 'prosody', 'emotion', 'fusion'].map((stageName) => {
+                  const stageLabel = { prosody: '韵律分析', emotion: '情绪识别', face_analysis: '人脸分析', fusion: '情绪融合' }[stageName] || stageName
                   const stageDesc = {
                     prosody: '分析语调、语速、停顿等韵律特征',
-                    emotion: '基于音频和视频的情绪识别',
+                    emotion: '基于音频的情绪识别',
+                    face_analysis: '基于视频的人脸表情分析',
                     fusion: '融合音频与视频情绪，生成报告',
                   }[stageName] || ''
-                  const canRun = allReviewed
+                  
+                  const stages = pipelineData?.stages || []
+                  const stageInfo = stages.find((s: any) => s.name === stageName)
+                  const stageStatus = stageInfo?.status || 'pending'
+                  const isCompleted = stageStatus === 'completed'
+                  const isRunning = stageStatus === 'running'
+                  
+                  // face_analysis can run anytime, others need all chunks reviewed
+                  const canRun = (stageName === 'face_analysis' ? true : allReviewed) && !isCompleted
 
                   return (
                     <Card
                       key={stageName}
                       size="small"
                       style={{
-                        borderColor: canRun ? '#1890ff' : '#f0f0f0',
-                        opacity: canRun ? 1 : 0.6,
+                        borderColor: isCompleted ? '#52c41a' : canRun ? '#1890ff' : '#f0f0f0',
+                        opacity: canRun || isCompleted ? 1 : 0.6,
                       }}
                     >
                       <Space direction="vertical" style={{ width: '100%' }}>
                         <Space>
-                          <BarChartOutlined style={{ fontSize: 20, color: '#1890ff' }} />
+                          {isCompleted ? <CheckCircleOutlined style={{ fontSize: 20, color: '#52c41a' }} /> : 
+                           isRunning ? <LoadingOutlined style={{ fontSize: 20, color: '#1890ff' }} /> :
+                           <BarChartOutlined style={{ fontSize: 20, color: '#1890ff' }} />}
                           <Text strong>{stageLabel}</Text>
                         </Space>
+                        <Tag color={
+                          stageStatus === 'completed' ? 'success' :
+                          stageStatus === 'running' ? 'processing' :
+                          stageStatus === 'failed' ? 'error' : 'default'
+                        }>
+                          {stageStatus === 'completed' ? '已完成' :
+                           stageStatus === 'running' ? '运行中' :
+                           stageStatus === 'failed' ? '失败' : '待执行'}
+                        </Tag>
                         <Text type="secondary" style={{ fontSize: 12 }}>{stageDesc}</Text>
                         <Button
-                          type="primary"
+                          type={isCompleted ? 'default' : 'primary'}
                           disabled={!canRun}
-                          loading={runGlobalStageMutation.isPending}
+                          loading={runGlobalStageMutation.isPending && !isCompleted}
                           onClick={() => runGlobalStageMutation.mutate(stageName)}
-                          icon={canRun ? <PlayCircleOutlined /> : undefined}
+                          icon={isCompleted ? <CheckCircleOutlined /> : canRun ? <PlayCircleOutlined /> : undefined}
                         >
-                          执行 {stageLabel}
+                          {isCompleted ? '重新执行' : '执行'}
                         </Button>
                       </Space>
                     </Card>

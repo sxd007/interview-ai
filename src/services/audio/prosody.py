@@ -46,10 +46,11 @@ class ProsodyAnalyzer:
 
     def analyze_array(self, audio: np.ndarray, sample_rate: Optional[int] = None) -> Dict[str, Any]:
         sr = sample_rate or self.sample_rate
-        if len(audio) == 0:
+        if audio is None or len(audio) == 0:
             return self._empty_result()
 
         energy = self._compute_energy(audio, sr)
+        
         pitch, voiced_flag, voiced_probs = self._compute_pitch(audio, sr)
         speech_rate, pause_ratio = self._compute_speech_rate(audio, sr)
         filler_count = self._detect_fillers(audio, sr)
@@ -60,9 +61,9 @@ class ProsodyAnalyzer:
             pitch_min=float(np.min(pitch[pitch > 0])) if np.any(pitch > 0) else 0.0,
             pitch_max=float(np.max(pitch[pitch > 0])) if np.any(pitch > 0) else 0.0,
             pitch_range=float(np.max(pitch) - np.min(pitch)) if len(pitch) > 0 else 0.0,
-            energy_mean=float(np.mean(energy)),
-            energy_std=float(np.std(energy)),
-            energy_range=float(np.max(energy) - np.min(energy)),
+            energy_mean=float(np.mean(energy)) if len(energy) > 0 else 0.0,
+            energy_std=float(np.std(energy)) if len(energy) > 0 else 0.0,
+            energy_range=float(np.max(energy) - np.min(energy)) if len(energy) > 0 else 0.0,
             speech_rate=speech_rate,
             pause_ratio=pause_ratio,
             filler_count=filler_count,
@@ -73,10 +74,21 @@ class ProsodyAnalyzer:
         self, audio: np.ndarray, sample_rate: int, segments: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         results = []
-        for seg in segments:
+        total_len = len(audio)
+        for i, seg in enumerate(segments):
             start_sample = int(seg["start"] * sample_rate)
             end_sample = int(seg["end"] * sample_rate)
+            
+            # Clamp to valid range
+            start_sample = max(0, min(start_sample, total_len))
+            end_sample = max(0, min(end_sample, total_len))
+            
             seg_audio = audio[start_sample:end_sample]
+            
+            if i < 3:  # Debug first 3 segments
+                print(f"[prosody] Segment {i}: seg_start={seg['start']}, seg_end={seg['end']}, "
+                      f"sample_range=[{start_sample}, {end_sample}], audio_len={len(seg_audio)}")
+            
             if len(seg_audio) > 0:
                 result = self.analyze_array(seg_audio, sample_rate)
             else:
@@ -87,8 +99,12 @@ class ProsodyAnalyzer:
         return results
 
     def _compute_energy(self, audio: np.ndarray, sr: int) -> np.ndarray:
+        if len(audio) == 0:
+            return np.array([])
         frame_length = int(0.025 * sr)
         hop_length = int(0.010 * sr)
+        if len(audio) < frame_length:
+            return np.array([np.sqrt(np.mean(audio**2))]) if len(audio) > 0 else np.array([])
         energy = np.array([
             np.sqrt(np.mean(audio[i:i+frame_length]**2))
             for i in range(0, len(audio) - frame_length, hop_length)
@@ -98,10 +114,12 @@ class ProsodyAnalyzer:
     def _compute_pitch(
         self, audio: np.ndarray, sr: int
     ):
+        if len(audio) < 2048:
+            return np.array([]), np.array([]), np.array([])
         f0, voiced_flag, voiced_probs = librosa.pyin(
             audio,
-            fmin=librosa.note_to_hz("C2"),
-            fmax=librosa.note_to_hz("C7"),
+            fmin=float(librosa.note_to_hz("C2")),
+            fmax=float(librosa.note_to_hz("C7")),
             sr=sr,
             frame_length=2048,
             hop_length=512,
@@ -113,12 +131,19 @@ class ProsodyAnalyzer:
     def _compute_speech_rate(
         self, audio: np.ndarray, sr: int
     ) -> tuple:
+        if len(audio) == 0:
+            return 0.0, 0.0
         frame_length = int(0.025 * sr)
         hop_length = int(0.010 * sr)
+        if len(audio) < frame_length:
+            return 0.0, 0.0
         energy = np.array([
             np.sqrt(np.mean(audio[i:i+frame_length]**2))
             for i in range(0, len(audio) - frame_length, hop_length)
         ])
+        
+        if len(energy) == 0:
+            return 0.0, 0.0
         
         energy_threshold = np.mean(energy) * 0.2
         speech_frames = energy > energy_threshold
@@ -133,6 +158,8 @@ class ProsodyAnalyzer:
         return speech_rate, pause_ratio
 
     def _detect_fillers(self, audio: np.ndarray, sr: int) -> int:
+        if len(audio) == 0:
+            return 0
         try:
             onset_env = librosa.onset.onset_strength(y=audio, sr=sr)
             onset_frames = librosa.onset.onset_detect(
@@ -141,7 +168,7 @@ class ProsodyAnalyzer:
             )
             durations = []
             for i in range(len(onset_frames) - 1):
-                dur = (onset_frames[i+1] - onset_frames[i]) * librosa.get_samplerate() / sr / 2
+                dur = (onset_frames[i+1] - onset_frames[i]) * sr / sr / 2
                 durations.append(dur)
             fillers = [d for d in durations if 0.03 < d < 0.15]
             return len(fillers)

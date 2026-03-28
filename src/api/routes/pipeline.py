@@ -9,6 +9,9 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from src.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 from src.api.deps import get_db
 from src.models.database import (
@@ -109,6 +112,22 @@ def run_pipeline_stage(
     interview = db.query(Interview).filter(Interview.id == interview_id).first()
     if not interview:
         raise HTTPException(status_code=404, detail="Interview not found")
+
+    # Auto-fix: check if face_analysis has data, update status if needed
+    from src.models.database import FaceFrame
+    face_frames = db.query(FaceFrame).filter(
+        FaceFrame.interview_id == interview_id
+    ).first()
+    if face_frames:
+        face_stage = db.query(PipelineStage).filter(
+            PipelineStage.interview_id == interview_id,
+            PipelineStage.stage_name == "face_analysis",
+        ).first()
+        if face_stage and face_stage.status != StageStatus.COMPLETED.value:
+            face_stage.status = StageStatus.COMPLETED.value
+            face_stage.completed_at = datetime.utcnow()
+            db.commit()
+            logger.info(f"[run_pipeline_stage] Auto-updated face_analysis to COMPLETED")
 
     can_run_, reason = can_run_stage(db, interview_id, stage_name)
     if not can_run_:
@@ -549,3 +568,88 @@ def _unlock_deep_analysis_stages(db: Session, interview_id: str):
     ).update({"prosody": None, "emotion_scores": {"emotion": "neutral"}}, synchronize_session=False)
 
     db.commit()
+
+
+@router.get("/{interview_id}/analysis/fusion")
+def get_fusion_analysis(interview_id: str, db: Session = Depends(get_db)):
+    """Get fusion analysis results for an interview."""
+    interview = db.query(Interview).filter(Interview.id == interview_id).first()
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview not found")
+    
+    import numpy as np
+    from src.models.database import AudioSegment, Speaker, FaceFrame
+    
+    from src.services.pipeline.cascade_engine import merge_speakers_by_label
+    merge_speakers_by_label(db, interview_id)
+    
+    segments = db.query(AudioSegment).filter(
+        AudioSegment.interview_id == interview_id
+    ).order_by(AudioSegment.start_time).all()
+    
+    face_frames = db.query(FaceFrame).filter(
+        FaceFrame.interview_id == interview_id
+    ).all()
+    
+    speakers = db.query(Speaker).filter(
+        Speaker.interview_id == interview_id,
+        Speaker.merged_into == None
+    ).all()
+    
+    speaker_summaries = []
+    
+    for speaker in speakers:
+        speaker_segments = [s for s in segments if s.speaker_id == speaker.id]
+        
+        if not speaker_segments:
+            continue
+        
+        total_duration = sum(s.end_time - s.start_time for s in speaker_segments)
+        
+        prosody_values = [s.prosody for s in speaker_segments if s.prosody]
+        emotion_values = [s.emotion_scores for s in speaker_segments if s.emotion_scores]
+        
+        prosody_summary = {}
+        if prosody_values:
+            prosody_summary = {
+                "pitch_mean": float(np.mean([p.get("pitch_mean", 0) for p in prosody_values if p])),
+                "pitch_std": float(np.mean([p.get("pitch_std", 0) for p in prosody_values if p])),
+                "speech_rate": float(np.mean([p.get("speech_rate", 0) for p in prosody_values if p])),
+                "pause_ratio": float(np.mean([p.get("pause_ratio", 0) for p in prosody_values if p])),
+                "filler_count": int(sum([p.get("filler_count", 0) for p in prosody_values if p])),
+            }
+        
+        emotion_counts = {}
+        for e in emotion_values:
+            if e and "dominant_emotion" in e:
+                dom = e["dominant_emotion"]
+                emotion_counts[dom] = emotion_counts.get(dom, 0) + 1
+        
+        dominant_emotion = max(emotion_counts, key=emotion_counts.get) if emotion_counts else "neutral"
+        
+        emotion_summary = {
+            "dominant_emotion": dominant_emotion,
+            "emotion_counts": emotion_counts,
+            "segment_count": len(speaker_segments),
+        }
+        
+        speaker_summaries.append({
+            "speaker_id": speaker.id,
+            "speaker_label": speaker.label,
+            "speaker_color": speaker.color,
+            "segment_count": len(speaker_segments),
+            "total_duration": round(total_duration, 2),
+            "prosody": prosody_summary,
+            "emotion": emotion_summary,
+        })
+    
+    speaker_summaries.sort(key=lambda x: x["total_duration"], reverse=True)
+    
+    return {
+        "speaker_summaries": speaker_summaries,
+        "interview_summary": {
+            "total_segments": len(segments),
+            "total_face_frames": len(face_frames),
+            "speaker_count": len(speaker_summaries),
+        }
+    }

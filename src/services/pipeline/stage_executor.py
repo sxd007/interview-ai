@@ -214,6 +214,28 @@ def can_run_stage(
     if not stage_def["depends_on"]:
         return True, ""
 
+    # Auto-fix: check if all chunks are reviewed, update stt/diarization status
+    from src.models.database import VideoChunk, ChunkStatus
+    all_chunks = db.query(VideoChunk).filter(
+        VideoChunk.interview_id == interview_id
+    ).all()
+    all_reviewed = len(all_chunks) > 0 and all(c.status == ChunkStatus.REVIEW_COMPLETED.value for c in all_chunks)
+    
+    if all_reviewed:
+        # Create or update stt stage
+        stt_stage = ensure_stage_exists(db, interview_id, "stt")
+        if stt_stage.status != StageStatus.COMPLETED.value:
+            stt_stage.status = StageStatus.COMPLETED.value
+            stt_stage.completed_at = datetime.utcnow()
+        
+        # Create or update diarization stage
+        diarization_stage = ensure_stage_exists(db, interview_id, "diarization")
+        if diarization_stage.status != StageStatus.COMPLETED.value:
+            diarization_stage.status = StageStatus.COMPLETED.value
+            diarization_stage.completed_at = datetime.utcnow()
+        
+        db.commit()
+
     dep_statuses = []
     for dep in stage_def["depends_on"]:
         dep_status = get_stage_status(db, interview_id, dep)

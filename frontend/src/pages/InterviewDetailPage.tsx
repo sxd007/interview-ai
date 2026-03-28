@@ -31,7 +31,7 @@ import {
   DownloadOutlined,
   EditOutlined,
 } from '@ant-design/icons'
-import { interviewApi, transcriptApi, reportApi } from '../services/api'
+import { interviewApi, transcriptApi, reportApi, pipelineApi } from '../services/api'
 import { ProsodyChart } from '../components/ProsodyChart'
 
 const { Title, Text, Paragraph } = Typography
@@ -70,11 +70,8 @@ export function InterviewDetailPage() {
   const { data: interviewData, isLoading: interviewLoading, isError } = useQuery({
     queryKey: ['interview', id],
     queryFn: () => interviewApi.get(id!),
-    refetchInterval: (query) => {
-      const status = query.state.data?.data?.status
-      if (status === 'processing' || status === 'pending' || status === 'queued') return 5000
-      return false
-    },
+    placeholderData: () => queryClient.getQueryData(['interview', id]),
+    refetchInterval: 5000,
     enabled: !!id,
   })
 
@@ -84,6 +81,13 @@ export function InterviewDetailPage() {
     queryKey: ['transcript', id],
     queryFn: () => transcriptApi.get(id!),
     enabled: !!id && !!interview,
+    retry: 3,
+  })
+
+  const { data: fusionData, isLoading: fusionLoading } = useQuery({
+    queryKey: ['fusion', id],
+    queryFn: () => pipelineApi.getFusion(id!),
+    enabled: !!id && interview?.status === 'completed',
     retry: 3,
   })
 
@@ -400,7 +404,55 @@ export function InterviewDetailPage() {
               ),
               children: (
                 <Card>
-                  <Empty description="暂无情绪分析数据" />
+                  {fusionLoading ? (
+                    <Spin tip="加载情绪数据..." />
+                  ) : fusionData?.data?.speaker_summaries && fusionData.data.speaker_summaries.length > 0 ? (
+                    <Space direction="vertical" style={{ width: '100%' }}>
+                      {fusionData.data.speaker_summaries.map((speaker) => (
+                        <Card key={speaker.speaker_id} size="small">
+                          <Space>
+                            <div
+                              style={{
+                                width: 16,
+                                height: 16,
+                                borderRadius: '50%',
+                                backgroundColor: speaker.speaker_color,
+                              }}
+                            />
+                            <Text strong>{speaker.speaker_label}</Text>
+                          </Space>
+                          <Descriptions column={2} size="small" style={{ marginTop: 8 }}>
+                            <Descriptions.Item label="发言时长">
+                              {formatTime(speaker.total_duration)}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="主导情绪">
+                              <Tag color={emotionColor(speaker.emotion.dominant_emotion)}>
+                                {speaker.emotion.dominant_emotion}
+                              </Tag>
+                            </Descriptions.Item>
+                            <Descriptions.Item label="语速">
+                              {speaker.prosody?.speech_rate?.toFixed(1)} 字/秒
+                            </Descriptions.Item>
+                            <Descriptions.Item label="停顿比例">
+                              {((speaker.prosody?.pause_ratio || 0) * 100).toFixed(1)}%
+                            </Descriptions.Item>
+                          </Descriptions>
+                          {speaker.emotion.emotion_counts && Object.keys(speaker.emotion.emotion_counts).length > 0 && (
+                            <div style={{ marginTop: 8 }}>
+                              <Text type="secondary">情绪分布: </Text>
+                              {Object.entries(speaker.emotion.emotion_counts).map(([emotion, count]) => (
+                                <Tag key={emotion} color={emotionColor(emotion)} style={{ marginLeft: 4 }}>
+                                  {emotion}: {count}
+                                </Tag>
+                              ))}
+                            </div>
+                          )}
+                        </Card>
+                      ))}
+                    </Space>
+                  ) : (
+                    <Empty description="暂无情绪分析数据，请先运行深度分析" />
+                  )}
                 </Card>
               ),
             },

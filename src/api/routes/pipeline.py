@@ -467,10 +467,22 @@ def _run_keyframes(db, interview):
 def _run_prosody(db: Session, interview):
     from src.services.audio.processor import AudioProcessor
     from src.services.audio.prosody import ProsodyAnalyzer
-    from src.models.database import AudioSegment
+    from src.models.database import AudioSegment, VideoChunk
     
     processor = AudioProcessor()
-    audio_path, _ = processor.extract_audio(interview.file_path)
+    
+    # 尝试复用已有的音频（STT 阶段已提取）
+    audio_path = None
+    chunks = db.query(VideoChunk).filter(VideoChunk.interview_id == interview.id).all()
+    for chunk in chunks:
+        if chunk.audio_path:
+            audio_path = chunk.audio_path
+            break
+    
+    # 如果没有已提取的音频，才需要重新提取
+    if not audio_path:
+        audio_path, _ = processor.extract_audio(interview.file_path)
+    
     raw_audio, sr = processor.load_audio(audio_path)
     
     prosody_analyzer = ProsodyAnalyzer()

@@ -1,0 +1,91 @@
+version: "3.9"
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+    environment:
+      - ENVIRONMENT=production
+      - DATABASE_URL=postgresql://postgres:password@db:5432/interview_ai
+      - UPLOAD_DIR=./data/uploads
+      - OUTPUT_DIR=./data/outputs
+      - MODEL_CACHE_DIR=./models
+      - HF_TOKEN=${HF_TOKEN}
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: always
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    command: celery -A src.services.tasks worker --loglevel=info
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+    environment:
+      - ENVIRONMENT=production
+      - DATABASE_URL=postgresql://postgres:password@db:5432/interview_ai
+      - REDIS_URL=redis://redis:6379/0
+      - HF_TOKEN=${HF_TOKEN}
+      - MODEL_CACHE_DIR=./models
+    depends_on:
+      - db
+      - redis
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: always
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=interview_ai
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: always
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: always
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api
+    restart: always
+
+volumes:
+  postgres_data:
+  redis_data:

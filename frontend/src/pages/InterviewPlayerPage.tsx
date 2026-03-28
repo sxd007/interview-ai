@@ -28,9 +28,11 @@ export function InterviewPlayerPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const videoRef = useRef<HTMLVideoElement>(null)
+  const timelineRef = useRef<HTMLDivElement>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
+  const [timelineWidth, setTimelineWidth] = useState(0)
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState('transcript')
 
@@ -49,6 +51,20 @@ export function InterviewPlayerPage() {
       if (active && active.id !== activeSegmentId) setActiveSegmentId(active.id)
     }
   }, [currentTime, segments])
+
+  useEffect(() => {
+    const updateWidth = () => {
+      if (timelineRef.current) {
+        const timelineEl = timelineRef.current.querySelector('[data-timeline]') as HTMLElement
+        if (timelineEl) setTimelineWidth(timelineEl.offsetWidth)
+      }
+    }
+    updateWidth()
+    window.addEventListener('resize', updateWidth)
+    return () => window.removeEventListener('resize', updateWidth)
+  }, [speakers, activeTab])
+
+  const indicatorLeft = timelineWidth > 0 ? 90 + (currentTime / (duration || 1)) * timelineWidth : 0
 
   const handleTimeUpdate = () => { if (videoRef.current) setCurrentTime(videoRef.current.currentTime) }
   const handleLoadedMetadata = () => { if (videoRef.current) setDuration(videoRef.current.duration) }
@@ -91,7 +107,7 @@ export function InterviewPlayerPage() {
           {activeTab === 'transcript' && <div>{segments.map(seg => { const speaker = speakers.find(s => s.id === seg.speaker_id); const isActive = seg.id === activeSegmentId; return <div key={seg.id} onClick={() => handleSegmentClick(seg)} style={{ padding: '8px 12px', marginBottom: 8, borderRadius: 4, background: isActive ? '#e6f7ff' : '#fafafa', border: isActive ? '1px solid #1890ff' : '1px solid #f0f0f0', cursor: 'pointer' }}><Space><Text type="secondary" style={{ fontSize: 12 }}>{formatTime(seg.start_time)}</Text><Tag color={speaker?.color || 'default'}>{seg.speaker_label || speaker?.label || '未知'}</Tag>{seg.emotion_scores?.dominant_emotion && <Tag color={emotionColor(seg.emotion_scores.dominant_emotion)}>{seg.emotion_scores.dominant_emotion}</Tag>}</Space><div style={{ marginTop: 4 }}><Text>{seg.transcript || '(无转录)'}</Text></div></div> })}</div>}
 
           {activeTab === 'timeline' && (
-            <div style={{ position: 'relative' }}>
+            <div ref={timelineRef} style={{ position: 'relative' }}>
               {speakers.map((speaker, idx) => {
                 const speakerSegments = segments.filter(s => s.speaker_id === speaker.id)
                 const totalTime = speakerSegments.reduce((acc, s) => acc + (s.end_time - s.start_time), 0)
@@ -99,7 +115,7 @@ export function InterviewPlayerPage() {
                 return (
                   <div key={speaker.id} style={{ display: 'flex', alignItems: 'center', background: isCurrentSpeaker ? '#fff1f0' : (idx % 2 === 0 ? '#fafafa' : '#f5f5f5'), borderBottom: '1px solid #e8e8e8' }}>
                     <div style={{ width: 90, padding: '4px 8px', flexShrink: 0 }}><Space size={4}><div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: speaker.color }} /><Text ellipsis style={{ fontSize: 11 }}>{speaker.label}</Text></Space></div>
-                    <div style={{ flex: 1, height: 24, position: 'relative', cursor: 'pointer' }} onClick={(e) => { const rect = e.currentTarget.getBoundingClientRect(); const ratio = (e.clientX - rect.left) / rect.width; const seekTime = ratio * duration; if (videoRef.current) { videoRef.current.currentTime = seekTime; setCurrentTime(seekTime) } }}>
+                    <div data-timeline style={{ flex: 1, height: 24, position: 'relative', cursor: 'pointer' }} onClick={(e) => { const rect = e.currentTarget.getBoundingClientRect(); const ratio = (e.clientX - rect.left) / rect.width; const seekTime = ratio * duration; if (videoRef.current) { videoRef.current.currentTime = seekTime; setCurrentTime(seekTime) } }}>
                       {[0, 0.25, 0.5, 0.75, 1].map(r => <div key={r} style={{ position: 'absolute', left: `${r * 100}%`, top: 0, bottom: 0, width: 1, background: '#e0e0e0' }} />)}
                       {speakerSegments.map(seg => { const left = duration > 0 ? (seg.start_time / duration) * 100 : 0; const width = duration > 0 ? ((seg.end_time - seg.start_time) / duration) * 100 : 0; const isActive = seg.id === activeSegmentId; return <div key={seg.id} onClick={(e) => { e.stopPropagation(); handleSegmentClick(seg) }} style={{ position: 'absolute', left: `${left}%`, width: `${width}%`, height: '100%', backgroundColor: speaker.color, opacity: isActive ? 1 : 0.7 }} /> })}
                     </div>
@@ -115,7 +131,7 @@ export function InterviewPlayerPage() {
                 </div>
                 <div style={{ width: 50 }} />
               </div>
-              <div style={{ position: 'absolute', left: `calc(90px + ${(currentTime / (duration || 1)) * 100}% * 0.98)`, top: 0, bottom: 0, width: 2, background: '#ff4d4f', zIndex: 100, pointerEvents: 'none', boxShadow: '0 0 4px rgba(255,77,79,0.5)' }} />
+              {timelineWidth > 0 && <div style={{ position: 'absolute', left: indicatorLeft, top: 0, bottom: 0, width: 2, background: '#ff4d4f', zIndex: 100, pointerEvents: 'none', boxShadow: '0 0 4px rgba(255,77,79,0.5)' }} />}
             </div>
           )}
 

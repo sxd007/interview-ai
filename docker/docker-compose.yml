@@ -1,15 +1,17 @@
 version: "3.9"
 
 services:
-  api:
+  # CPU Version - For macOS, Linux without GPU, or development
+  api-cpu:
     build:
-      context: .
-      dockerfile: docker/Dockerfile.api
+      context: ..
+      dockerfile: docker/Dockerfile.cpu
+    container_name: interview-ai-cpu
     ports:
       - "8000:8000"
     volumes:
-      - ./data:/app/data
-      - ./models:/app/models
+      - ../data:/app/data
+      - ../models:/app/models
     environment:
       - ENVIRONMENT=development
       - DATABASE_URL=sqlite:///./data/interview_ai.db
@@ -17,7 +19,34 @@ services:
       - OUTPUT_DIR=./data/outputs
       - MODEL_CACHE_DIR=./models
       - HF_TOKEN=${HF_TOKEN:-}
+    environment_file:
+      - ../.env
+    restart: unless-stopped
+
+  # GPU Version - For Linux with NVIDIA GPU
+  # Usage: docker-compose -f docker-compose.yml -f docker-compose.gpu.yml up
+  # Or directly:
+  # docker-compose -f docker-compose.yml up api-gpu
+  api-gpu:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.gpu
+    container_name: interview-ai-gpu
+    ports:
+      - "8001:8000"
+    volumes:
+      - ../data:/app/data
+      - ../models:/app/models
+    environment:
+      - ENVIRONMENT=production
+      - DATABASE_URL=sqlite:///./data/interview_ai.db
+      - UPLOAD_DIR=./data/uploads
+      - OUTPUT_DIR=./data/outputs
+      - MODEL_CACHE_DIR=./models
+      - HF_TOKEN=${HF_TOKEN:-}
       - CUDA_VISIBLE_DEVICES=0
+    environment_file:
+      - ../.env
     deploy:
       resources:
         reservations:
@@ -26,14 +55,5 @@ services:
               count: 1
               capabilities: [gpu]
     restart: unless-stopped
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    restart: unless-stopped
-
-volumes:
-  redis_data:
+    profiles:
+      - gpu

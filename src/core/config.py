@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     debug: bool = False
     log_level: str = "INFO"
 
+    # Device configuration: auto, cpu, cuda, mps
+    # auto: automatically detect (cuda > mps > cpu)
+    device: str = "auto"
+
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     api_title: str = "Interview AI API"
@@ -62,6 +66,26 @@ class Settings(BaseSettings):
     def ensure_directories(self) -> None:
         for directory in [self.upload_dir, self.output_dir, self.model_cache_dir]:
             directory.mkdir(parents=True, exist_ok=True)
+
+    def get_device(self) -> str:
+        """Get the actual device to use based on config and availability."""
+        import torch
+
+        if self.device != "auto":
+            return self.device
+        
+        # Auto-detect
+        if torch.cuda.is_available():
+            return "cuda:0"
+        elif torch.backends.mps.is_available():
+            return "mps"
+        return "cpu"
+
+    @property
+    def is_gpu_available(self) -> bool:
+        """Check if GPU is available."""
+        import torch
+        return torch.cuda.is_available() or torch.backends.mps.is_available()
 
 
 settings = Settings()

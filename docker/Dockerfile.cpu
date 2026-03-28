@@ -1,10 +1,9 @@
-# ============================================
-# Stage 1: Base
-# ============================================
-FROM python:3.10-slim AS base
+# CPU Version - For macOS, Linux without GPU, or development
+FROM python:3.10-slim
 
 ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    CUDA_VISIBLE_DEVICES=-1
 
 WORKDIR /app
 
@@ -15,17 +14,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1-mesa-glx \
     && rm -rf /var/lib/apt/lists/*
 
-# Install common dependencies
-COPY pyproject.toml poetry.lock* ./
+# Install CPU-only PyTorch
+RUN pip install --no-cache-dir torch==2.1.0 --index-url https://download.pytorch.org/whl/cpu
+
+# Install dependencies
+COPY pyproject.toml requirements.txt* ./
 RUN pip install --no-cache-dir poetry && \
     poetry config virtualenvs.create false && \
     poetry install --no-interaction --no-ansi --no-root || \
-    pip install --no-cache-dir -r requirements.txt
-
-# ============================================
-# Stage 2: Runtime
-# ============================================
-FROM base AS runtime
+    (pip install --no-cache-dir -r requirements.txt || true)
 
 COPY src/ ./src/
 COPY scripts/ ./scripts/

@@ -129,6 +129,8 @@ def run_pipeline_stage(
             result = _run_face_analysis(db, interview)
         elif stage_name == "keyframes":
             result = _run_keyframes(db, interview)
+        elif stage_name == "prosody":
+            result = _run_prosody(db, interview)
         else:
             raise HTTPException(status_code=400, detail=f"Stage '{stage_name}' not yet implemented")
 
@@ -460,6 +462,42 @@ def _run_keyframes(db, interview):
         ))
     db.commit()
     return {"keyframes": len(keyframes)}
+
+
+def _run_prosody(db: Session, interview):
+    from src.services.audio.processor import AudioProcessor
+    from src.services.audio.prosody import ProsodyAnalyzer
+    from src.models.database import AudioSegment
+    
+    processor = AudioProcessor()
+    audio_path, _ = processor.extract_audio(interview.file_path)
+    raw_audio, sr = processor.load_audio(audio_path)
+    
+    prosody_analyzer = ProsodyAnalyzer()
+    
+    segments = db.query(AudioSegment).filter(
+        AudioSegment.interview_id == interview.id
+    ).order_by(AudioSegment.start_time).all()
+    
+    segments_data = []
+    for seg in segments:
+        segments_data.append({
+            "start": seg.start_time,
+            "end": seg.end_time,
+            "text": seg.transcript,
+        })
+    
+    if not segments_data:
+        return {"error": "No segments found"}
+    
+    results = prosody_analyzer.analyze_segments(raw_audio, sr, segments_data)
+    
+    for i, seg in enumerate(segments):
+        if i < len(results):
+            seg.prosody = results[i]
+    
+    db.commit()
+    return {"segments_analyzed": len(segments)}
 
 
 def _unlock_deep_analysis_stages(db: Session, interview_id: str):

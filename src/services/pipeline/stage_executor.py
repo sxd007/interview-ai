@@ -211,12 +211,17 @@ def can_run_stage(
     if not stage_def:
         return False, f"Unknown stage: {stage_name}"
 
+    if not stage_def["depends_on"]:
+        return True, ""
+
+    dep_statuses = []
     for dep in stage_def["depends_on"]:
         dep_status = get_stage_status(db, interview_id, dep)
+        dep_statuses.append(f"{dep}={dep_status}")
         if dep_status == StageStatus.FAILED.value:
             return False, f"Dependency '{dep}' failed"
         if dep_status not in (StageStatus.COMPLETED.value, StageStatus.AWAITING_REVIEW.value):
-            return False, f"Dependency '{dep}' not completed (status: {dep_status})"
+            return False, f"Dependency '{dep}' not completed (status: {dep_status}). Required: {', '.join(dep_statuses)}"
 
     return True, ""
 

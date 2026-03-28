@@ -267,6 +267,7 @@ def approve_chunk(
     all_reviewed = all(c.status == ChunkStatus.REVIEW_COMPLETED.value for c in all_chunks)
 
     if all_reviewed:
+        # Update stt stage status
         stt_stage = db.query(PipelineStage).filter(
             PipelineStage.interview_id == interview_id,
             PipelineStage.stage_name == "stt",
@@ -275,6 +276,16 @@ def approve_chunk(
             stt_stage.status = StageStatus.COMPLETED.value
             stt_stage.completed_at = datetime.utcnow()
             stt_stage.result_summary = {"all_chunks_reviewed": True}
+
+        # Also update diarization stage status
+        diarization_stage = db.query(PipelineStage).filter(
+            PipelineStage.interview_id == interview_id,
+            PipelineStage.stage_name == "diarization",
+        ).first()
+        if diarization_stage and diarization_stage.status != StageStatus.COMPLETED.value:
+            diarization_stage.status = StageStatus.COMPLETED.value
+            diarization_stage.completed_at = datetime.utcnow()
+            diarization_stage.result_summary = {"all_chunks_reviewed": True}
 
         _unlock_deep_analysis_stages(db, interview_id)
 

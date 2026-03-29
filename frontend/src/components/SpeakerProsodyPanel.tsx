@@ -19,37 +19,56 @@ const formatTime = (seconds: number) => {
   return `${m}:${String(s).padStart(2, '0')}`
 }
 
-const COLORS = ['#409EFF', '#67C23A', '#FF9800', '#F56C6C', '#9C27B0', '#00BCD4', '#E6A23C', '#909399']
+const CHART_COLORS = ['#409EFF', '#67C23A', '#FF9800', '#F56C6C', '#9C27B0', '#00BCD4', '#E6A23C', '#909399']
 
 export function SpeakerProsodyPanel({ segments, speakers }: Props) {
-  const [selectedSpeakerId, setSelectedSpeakerId] = useState<string | null>(speakers[0]?.id || null)
+  const [showAllSpeakers, setShowAllSpeakers] = useState(true)
+  const [selectedSpeakerId, setSelectedSpeakerId] = useState<string | null>(null)
 
-  const filteredSegments = selectedSpeakerId
-    ? segments.filter(seg => seg.speaker_id === selectedSpeakerId)
-    : segments
+  const filteredSegments = showAllSpeakers
+    ? segments
+    : segments.filter(seg => seg.speaker_id === selectedSpeakerId)
 
   const speakerOptions = speakers.map((s, i) => ({
     value: s.id,
     label: (
       <Space>
-        <div style={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: s.color || COLORS[i % COLORS.length] }} />
+        <div style={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: s.color || CHART_COLORS[i % CHART_COLORS.length] }} />
         {s.label}
       </Space>
     )
   }))
 
-  const chartData = filteredSegments
+  const allSegmentsWithSpeaker = filteredSegments
     .filter((seg) => seg.prosody)
-    .map((seg) => ({
-      time: formatTime(seg.start_time),
-      start: Math.round(seg.start_time),
-      pitch_mean: seg.prosody?.pitch_mean ? Math.round(seg.prosody.pitch_mean) : null,
-      pitch_std: seg.prosody?.pitch_std ? Math.round(seg.prosody.pitch_std) : null,
-      energy_mean: seg.prosody?.energy_mean ? Math.round(seg.prosody.energy_mean * 100) : null,
-      speech_rate: seg.prosody?.speech_rate ? Math.round(seg.prosody.speech_rate * 10) / 10 : null,
-      pause_ratio: seg.prosody?.pause_ratio ? Math.round(seg.prosody.pause_ratio * 100) : null,
-      filler_count: seg.prosody?.filler_count || 0,
-    }))
+    .map((seg) => {
+      const speakerIdx = speakers.findIndex(s => s.id === seg.speaker_id)
+      return {
+        time: formatTime(seg.start_time),
+        start: Math.round(seg.start_time),
+        speaker_id: seg.speaker_id,
+        speaker_label: seg.speaker_label || speakers[speakerIdx]?.label || '未知',
+        speaker_color: speakers[speakerIdx]?.color || CHART_COLORS[speakerIdx % CHART_COLORS.length],
+        pitch_mean: seg.prosody?.pitch_mean ? Math.round(seg.prosody.pitch_mean) : null,
+        pitch_std: seg.prosody?.pitch_std ? Math.round(seg.prosody.pitch_std) : null,
+        energy_mean: seg.prosody?.energy_mean ? Math.round(seg.prosody.energy_mean * 100) : null,
+        speech_rate: seg.prosody?.speech_rate ? Math.round(seg.prosody.speech_rate * 10) / 10 : null,
+        pause_ratio: seg.prosody?.pause_ratio ? Math.round(seg.prosody.pause_ratio * 100) : null,
+        filler_count: seg.prosody?.filler_count || 0,
+      }
+    })
+
+  const chartData = allSegmentsWithSpeaker
+
+  const speakerDataMap = speakers.map((speaker, idx) => {
+    const speakerSegments = allSegmentsWithSpeaker.filter(s => s.speaker_id === speaker.id)
+    return {
+      speakerId: speaker.id,
+      speakerLabel: speaker.label,
+      color: speaker.color || CHART_COLORS[idx % CHART_COLORS.length],
+      segments: speakerSegments,
+    }
+  })
 
   const avgPitch = chartData.reduce((sum, d) => sum + (d.pitch_mean || 0), 0) / (chartData.filter(d => d.pitch_mean).length || 1)
   const avgEnergy = chartData.reduce((sum, d) => sum + (d.energy_mean || 0), 0) / (chartData.filter(d => d.energy_mean).length || 1)
@@ -64,12 +83,17 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
     const spkTotalDuration = spkSegments.reduce((sum, d) => sum + (d.end_time - d.start_time), 0)
     return {
       speaker: speaker.label,
-      color: speaker.color || COLORS[idx % COLORS.length],
+      color: speaker.color || CHART_COLORS[idx % CHART_COLORS.length],
       speech_rate: Math.round(spkAvgSpeechRate * 10) / 10,
       pause_ratio: Math.round(spkAvgPause * 100),
       total_duration: Math.round(spkTotalDuration),
     }
   })
+
+  const handleSpeakerChange = (value: string | null) => {
+    setSelectedSpeakerId(value)
+    setShowAllSpeakers(value === null)
+  }
 
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
@@ -77,8 +101,8 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
         <Text strong style={{ fontSize: 16 }}>韵律分析</Text>
         <Select
           style={{ width: 200 }}
-          value={selectedSpeakerId}
-          onChange={setSelectedSpeakerId}
+          value={showAllSpeakers ? null : selectedSpeakerId}
+          onChange={handleSpeakerChange}
           placeholder="选择说话人"
           options={[{ value: null, label: '全部说话人' }, ...speakerOptions]}
         />
@@ -173,27 +197,38 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
       {chartData.length > 0 ? (
         <>
           <Card title="音高变化">
-            <ResponsiveContainer width="100%" height={200}>
+            <ResponsiveContainer width="100%" height={250}>
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="time" />
                 <YAxis />
                 <Tooltip />
                 <Legend />
-                <Line
-                  type="monotone"
-                  dataKey="pitch_mean"
-                  stroke="#409EFF"
-                  name="平均音高 (Hz)"
-                  dot={false}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="pitch_std"
-                  stroke="#9C27B0"
-                  name="音高标准差"
-                  dot={false}
-                />
+                {speakerDataMap.map((spk) => (
+                  <Line
+                    key={spk.speakerId}
+                    type="monotone"
+                    dataKey="pitch_mean"
+                    data={spk.segments}
+                    stroke={spk.color}
+                    name={`${spk.speakerLabel} 音高`}
+                    dot={false}
+                    connectNulls
+                  />
+                ))}
+                {showAllSpeakers && speakerDataMap.map((spk) => (
+                  <Line
+                    key={`${spk.speakerId}-std`}
+                    type="monotone"
+                    dataKey="pitch_std"
+                    data={spk.segments}
+                    stroke={spk.color}
+                    strokeDasharray="5 5"
+                    name={`${spk.speakerLabel} 音高变化`}
+                    dot={false}
+                    connectNulls
+                  />
+                ))}
               </LineChart>
             </ResponsiveContainer>
           </Card>
@@ -202,13 +237,25 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
             <Col span={12}>
               <Card title="能量变化">
                 <ResponsiveContainer width="100%" height={200}>
-                  <BarChart data={chartData}>
+                  <LineChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="time" />
                     <YAxis />
                     <Tooltip />
-                    <Bar dataKey="energy_mean" fill="#67C23A" name="平均能量" />
-                  </BarChart>
+                    <Legend />
+                    {speakerDataMap.map((spk) => (
+                      <Line
+                        key={spk.speakerId}
+                        type="monotone"
+                        dataKey="energy_mean"
+                        data={spk.segments}
+                        stroke={spk.color}
+                        name={`${spk.speakerLabel} 能量`}
+                        dot={false}
+                        connectNulls
+                      />
+                    ))}
+                  </LineChart>
                 </ResponsiveContainer>
               </Card>
             </Col>
@@ -222,22 +269,33 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
                     <YAxis yAxisId="right" orientation="right" />
                     <Tooltip />
                     <Legend />
-                    <Line
-                      yAxisId="left"
-                      type="monotone"
-                      dataKey="speech_rate"
-                      stroke="#FF9800"
-                      name="语速"
-                      dot={false}
-                    />
-                    <Line
-                      yAxisId="right"
-                      type="monotone"
-                      dataKey="pause_ratio"
-                      stroke="#F56C6C"
-                      name="停顿% "
-                      dot={false}
-                    />
+                    {speakerDataMap.map((spk) => (
+                      <Line
+                        key={`${spk.speakerId}-sr`}
+                        yAxisId="left"
+                        type="monotone"
+                        dataKey="speech_rate"
+                        data={spk.segments}
+                        stroke={spk.color}
+                        name={`${spk.speakerLabel} 语速`}
+                        dot={false}
+                        connectNulls
+                      />
+                    ))}
+                    {speakerDataMap.map((spk) => (
+                      <Line
+                        key={`${spk.speakerId}-pr`}
+                        yAxisId="right"
+                        type="monotone"
+                        dataKey="pause_ratio"
+                        data={spk.segments}
+                        stroke={spk.color}
+                        strokeDasharray="3 3"
+                        name={`${spk.speakerLabel} 停顿%`}
+                        dot={false}
+                        connectNulls
+                      />
+                    ))}
                   </LineChart>
                 </ResponsiveContainer>
               </Card>

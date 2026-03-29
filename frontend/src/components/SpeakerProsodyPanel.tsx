@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  ResponsiveContainer, BarChart, Bar,
+  ResponsiveContainer, ReferenceArea, ReferenceLine, ComposedChart,
+  BarChart, Bar,
 } from 'recharts'
-import { Card, Row, Col, Statistic, Space, Typography, Select } from 'antd'
+import { Card, Row, Col, Statistic, Space, Typography, Select, Radio, InputNumber } from 'antd'
 import { Segment, Speaker } from '../services/api'
 
 const { Text } = Typography
@@ -21,9 +22,75 @@ const formatTime = (seconds: number) => {
 
 const CHART_COLORS = ['#409EFF', '#67C23A', '#FF9800', '#F56C6C', '#9C27B0', '#00BCD4', '#E6A23C', '#909399']
 
+type BaselineMode = 'percentile' | 'range' | 'prefix'
+
+const getPercentile = (arr: number[], p: number): number => {
+  if (arr.length === 0) return 0
+  const sorted = [...arr].sort((a, b) => a - b)
+  const idx = Math.ceil((p / 100) * sorted.length) - 1
+  return sorted[Math.max(0, idx)]
+}
+
+const calcBaselineByPercentile = (segments: Segment[], lowerPct: number, upperPct: number) => {
+  const values = segments
+    .filter(s => s.prosody?.pitch_mean && s.prosody.pitch_mean > 0)
+    .map(s => s.prosody!.pitch_mean!)
+    .filter((v): v is number => v !== undefined && v > 0)
+    .sort((a, b) => a - b)
+  
+  if (values.length === 0) return { lower: 0, upper: 0 }
+  return {
+    lower: getPercentile(values, lowerPct),
+    upper: getPercentile(values, upperPct),
+  }
+}
+
+const calcBaselineByRange = (segments: Segment[], startSec: number, endSec: number) => {
+  const values = segments
+    .filter(s => s.prosody?.pitch_mean && s.prosody.pitch_mean > 0)
+    .filter(s => s.start_time >= startSec && s.end_time <= endSec)
+    .map(s => s.prosody!.pitch_mean!)
+    .filter((v): v is number => v !== undefined && v > 0)
+  
+  if (values.length === 0) return null
+  return {
+    lower: Math.min(...values),
+    upper: Math.max(...values),
+  }
+}
+
+const calcBaselineByPrefix = (segments: Segment[], speakersList: Speaker[], seconds: number) => {
+  const baselines: Record<string, { lower: number; upper: number }> = {}
+  
+  for (const speaker of speakersList) {
+    const spkSegments = segments.filter(s => s.speaker_id === speaker.id)
+    const values = spkSegments
+      .filter(s => s.prosody?.pitch_mean && s.prosody.pitch_mean > 0)
+      .filter(s => s.end_time <= seconds)
+      .map(s => s.prosody!.pitch_mean!)
+      .filter((v): v is number => v !== undefined && v > 0)
+    
+    if (values.length > 0) {
+      baselines[speaker.id] = {
+        lower: Math.min(...values),
+        upper: Math.max(...values),
+      }
+    }
+  }
+  
+  return baselines
+}
+
 export function SpeakerProsodyPanel({ segments, speakers }: Props) {
   const [showAllSpeakers, setShowAllSpeakers] = useState(true)
   const [selectedSpeakerId, setSelectedSpeakerId] = useState<string | null>(null)
+  
+  const [baselineMode, setBaselineMode] = useState<BaselineMode>('percentile')
+  const [percentileLower, setPercentileLower] = useState(25)
+  const [percentileUpper, setPercentileUpper] = useState(40)
+  const [customRangeStart, setCustomRangeStart] = useState(0)
+  const [customRangeEnd, setCustomRangeEnd] = useState(60)
+  const [prefixSeconds, setPrefixSeconds] = useState(180)
 
   const filteredSegments = showAllSpeakers
     ? segments
@@ -62,12 +129,32 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
 
   const tickFormatter = (val: number) => formatTime(val)
 
+  const globalBaseline = useMemo(() => {
+    if (baselineMode === 'percentile') {
+      return calcBaselineByPercentile(filteredSegments, percentileLower, percentileUpper)
+    } else if (baselineMode === 'range') {
+      return calcBaselineByRange(filteredSegments, customRangeStart, customRangeEnd)
+    }
+    return null
+  }, [filteredSegments, baselineMode, percentileLower, percentileUpper, customRangeStart, customRangeEnd])
+
+  const speakerBaselines = useMemo(() => {
+    if (baselineMode === 'prefix') {
+      return calcBaselineByPrefix(segments, speakers, prefixSeconds)
+    }
+    return {}
+  }, [segments, speakers, baselineMode, prefixSeconds])
+
   const speakerDataMap = speakers.map((speaker, idx) => {
     const speakerSegments = allSegmentsWithSpeaker.filter(s => s.speaker_id === speaker.id)
+    const baseline = baselineMode === 'prefix' 
+      ? speakerBaselines[speaker.id] 
+      : (globalBaseline || { lower: 0, upper: 0 })
     return {
       speakerId: speaker.id,
       speakerLabel: speaker.label,
       color: speaker.color || CHART_COLORS[idx % CHART_COLORS.length],
+      baseline,
       segments: speakerSegments,
     }
   })
@@ -99,16 +186,105 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
 
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
         <Text strong style={{ fontSize: 16 }}>韵律分析</Text>
-        <Select
-          style={{ width: 200 }}
-          value={showAllSpeakers ? null : selectedSpeakerId}
-          onChange={handleSpeakerChange}
-          placeholder="选择说话人"
-          options={[{ value: null, label: '全部说话人' }, ...speakerOptions]}
-        />
+        <Space wrap>
+          <Select
+            style={{ width: 200 }}
+            value={showAllSpeakers ? null : selectedSpeakerId}
+            onChange={handleSpeakerChange}
+            placeholder="选择说话人"
+            options={[{ value: null, label: '全部说话人' }, ...speakerOptions]}
+          />
+        </Space>
       </div>
+
+      <Card size="small" title="音高Baseline设置" style={{ background: '#fafafa' }}>
+        <Space wrap align="center">
+          <Text>模式：</Text>
+          <Radio.Group
+            value={baselineMode}
+            onChange={(e) => setBaselineMode(e.target.value)}
+            optionType="button"
+            buttonStyle="solid"
+            size="small"
+          >
+            <Radio.Button value="percentile">分位数区间</Radio.Button>
+            <Radio.Button value="range">自定义区间</Radio.Button>
+            <Radio.Button value="prefix">开头N秒</Radio.Button>
+          </Radio.Group>
+
+          {baselineMode === 'percentile' && (
+            <Space>
+              <InputNumber
+                min={5}
+                max={45}
+                value={percentileLower}
+                onChange={(v) => setPercentileLower(v || 25)}
+                size="small"
+                style={{ width: 60 }}
+                addonAfter="%"
+              />
+              <Text>~</Text>
+              <InputNumber
+                min={55}
+                max={95}
+                value={percentileUpper}
+                onChange={(v) => setPercentileUpper(v || 40)}
+                size="small"
+                style={{ width: 60 }}
+                addonAfter="%"
+              />
+              <Text type="secondary">(25-40%分位数区间作为baseline)</Text>
+            </Space>
+          )}
+
+          {baselineMode === 'range' && (
+            <Space>
+              <InputNumber
+                min={0}
+                value={customRangeStart}
+                onChange={(v) => setCustomRangeStart(v || 0)}
+                size="small"
+                style={{ width: 70 }}
+                addonAfter="秒"
+                placeholder="开始"
+              />
+              <Text>~</Text>
+              <InputNumber
+                min={0}
+                value={customRangeEnd}
+                onChange={(v) => setCustomRangeEnd(v || 60)}
+                size="small"
+                style={{ width: 70 }}
+                addonAfter="秒"
+                placeholder="结束"
+              />
+            </Space>
+          )}
+
+          {baselineMode === 'prefix' && (
+            <Space>
+              <InputNumber
+                min={10}
+                max={600}
+                value={prefixSeconds}
+                onChange={(v) => setPrefixSeconds(v || 180)}
+                size="small"
+                style={{ width: 80 }}
+                addonAfter="秒"
+              />
+              <Text type="secondary">(开头N秒作为各人baseline，按人分别计算)</Text>
+            </Space>
+          )}
+
+          {globalBaseline && baselineMode !== 'prefix' && (
+            <Text type="secondary" style={{ marginLeft: 16 }}>
+              当前Baseline: {Math.round(globalBaseline.lower)} ~ {Math.round(globalBaseline.upper)} Hz
+            </Text>
+          )}
+        </Space>
+      </Card>
 
       <Row gutter={16}>
         <Col span={4}>
@@ -199,12 +375,18 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
       {chartData.length > 0 ? (
         <>
           <Card title="音高变化">
-            <ResponsiveContainer width="100%" height={250}>
-              <LineChart data={chartData}>
+            <ResponsiveContainer width="100%" height={300}>
+              <ComposedChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="time" tickFormatter={tickFormatter} />
                 <YAxis />
-                <Tooltip />
+                <Tooltip 
+                  formatter={(value: number, name: string) => {
+                    if (name?.includes('音高') && value) return [`${Math.round(value)} Hz`, name]
+                    return [value, name]
+                  }}
+                  labelFormatter={(label) => `时间: ${formatTime(label)}`}
+                />
                 <Legend />
                 {speakerDataMap.map((spk) => (
                   <Line
@@ -213,26 +395,38 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
                     dataKey="pitch_mean"
                     data={spk.segments}
                     stroke={spk.color}
+                    strokeWidth={2}
                     name={`${spk.speakerLabel} 音高`}
                     dot={false}
                     connectNulls
                   />
                 ))}
-                {showAllSpeakers && speakerDataMap.map((spk) => (
-                  <Line
-                    key={`${spk.speakerId}-std`}
-                    type="monotone"
-                    dataKey="pitch_std"
-                    data={spk.segments}
-                    stroke={spk.color}
-                    strokeDasharray="5 5"
-                    name={`${spk.speakerLabel} 音高变化`}
-                    dot={false}
-                    connectNulls
-                  />
-                ))}
-              </LineChart>
+                {speakerDataMap.map((spk) => {
+                  const bl = spk.baseline
+                  if (!bl || bl.lower <= 0) return null
+                  const xMin = Math.min(...chartData.map(d => d.time))
+                  const xMax = Math.max(...chartData.map(d => d.time))
+                  return (
+                    <ReferenceArea
+                      key={`${spk.speakerId}-baseline`}
+                      x1={xMin}
+                      x2={xMax}
+                      y1={bl.lower}
+                      y2={bl.upper}
+                      strokeOpacity={0.3}
+                      fill={spk.color}
+                      fillOpacity={0.1}
+                    />
+                  )
+                })}
+                <ReferenceLine y={0} stroke="#999" />
+              </ComposedChart>
             </ResponsiveContainer>
+            <div style={{ marginTop: 8, textAlign: 'center' }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                浅色区域 = Baseline区间 (正常音高范围)
+              </Text>
+            </div>
           </Card>
 
           <Row gutter={16}>

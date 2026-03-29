@@ -89,6 +89,13 @@ export function PipelinePage() {
     refetchInterval: 5000,
   })
 
+  const { data: mergeStatusData } = useQuery({
+    queryKey: ['merge-status', id],
+    queryFn: () => api.get(`/interviews/${id}/pipeline/merge-status`).then(r => r.data),
+    enabled: !!id,
+  })
+  const isMerged = mergeStatusData?.is_merged || false
+
   const runAllChunksMutation = useMutation({
     mutationFn: () => 
       api.post(`/interviews/${id}/process`, { 
@@ -111,6 +118,17 @@ export function PipelinePage() {
       queryClient.invalidateQueries({ queryKey: ['chunks', id] })
     },
     onError: (e: any) => message.error(e?.response?.data?.detail || '执行失败'),
+  })
+
+  const mergeSpeakersMutation = useMutation({
+    mutationFn: () =>
+      api.post(`/interviews/${id}/pipeline/merge-speakers`),
+    onSuccess: (data) => {
+      message.success(`说话人合并完成：合并了 ${data.data.speakers_merged} 个说话人`)
+      queryClient.invalidateQueries({ queryKey: ['merge-status', id] })
+      queryClient.invalidateQueries({ queryKey: ['transcript', id] })
+    },
+    onError: (e: any) => message.error(e?.response?.data?.detail || '合并失败'),
   })
 
   const interview = interviewData || {}
@@ -272,16 +290,47 @@ export function PipelinePage() {
             </Space>
           </Card>
 
-          <Card title="深度分析阶段">
+          <Card title="说话人合并">
             <Space direction="vertical" style={{ width: '100%' }}>
               <Alert
+                type={isMerged ? 'success' : 'warning'}
+                showIcon
+                icon={isMerged ? <CheckCircleOutlined /> : <ClockCircleOutlined />}
+                message={
+                  isMerged
+                    ? '已完成说话人合并（跨Chunk同名说话人已合并）'
+                    : '尚未合并说话人（跨Chunk同名说话人将被合并）'
+                }
+                style={{ marginBottom: 16 }}
+              />
+              <Button
+                type="primary"
+                onClick={() => mergeSpeakersMutation.mutate()}
+                loading={mergeSpeakersMutation.isPending}
+                disabled={!allReviewed}
+              >
+                合并说话人
+              </Button>
+              {!allReviewed && (
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  提示：所有Chunk审核完成后才能合并说话人
+                </Text>
+              )}
+            </Space>
+          </Card>
+
+          <Card title="深度分析阶段">
+            <Space direction="vertical" style={{ width: '100%' }}>
+                <Alert
                 type={allReviewed ? 'success' : 'info'}
                 showIcon
                 icon={allReviewed ? <CheckCircleOutlined /> : <ClockCircleOutlined />}
                 message={
-                  allReviewed
-                    ? '所有 Chunk 审核已完成，可以执行深度分析'
-                    : `请先完成所有 Chunk 的人工审核（${reviewedCount}/${chunks.length}）`
+                  !allReviewed
+                    ? `请先完成所有 Chunk 的人工审核（${reviewedCount}/${chunks.length}）`
+                    : !isMerged
+                    ? '请先完成说话人合并'
+                    : '所有审核已完成，可以执行深度分析'
                 }
                 style={{ marginBottom: 16 }}
               />
@@ -294,16 +343,37 @@ export function PipelinePage() {
                     emotion: '基于音频的情绪识别',
                     face_analysis: '基于视频的人脸表情分析',
                     fusion: '融合音频与视频情绪，生成报告',
-                  }[stageName] || ''
-                  
+}[stageName] || ''
+                   
                   const stages = pipelineData?.stages || []
+                   
+                  // Stage dependencies: which stages must be completed first
+                  const stageDependencies: Record<string, string[]> = {
+                    prosody: ['stt'],
+                    emotion: ['prosody'],
+                    fusion: ['emotion', 'face_analysis'],
+                    face_analysis: [],
+                  }
+                   
+                  const getStageStatus = (name: string) => {
+                    const s = stages.find((st: any) => st.name === name)
+                    return s?.status || 'pending'
+                  }
+                   
+                  const dependencies = stageDependencies[stageName] || []
+                  const depsCompleted = dependencies.every(dep => getStageStatus(dep) === 'completed')
+                  const depsPending = dependencies.filter(dep => getStageStatus(dep) !== 'completed')
+                   
                   const stageInfo = stages.find((s: any) => s.name === stageName)
                   const stageStatus = stageInfo?.status || 'pending'
                   const isCompleted = stageStatus === 'completed'
                   const isRunning = stageStatus === 'running'
-                  
-                  // face_analysis can run anytime, others need all chunks reviewed
-                  const canRun = (stageName === 'face_analysis' ? true : allReviewed) && !isCompleted
+                   
+                  // face_analysis can run anytime
+                  // Other stages can run when: allReviewed AND speakers merged AND dependencies completed, or if already completed (re-run allowed)
+                  const canRun = stageName === 'face_analysis' 
+                    ? true 
+                    : (allReviewed && isMerged && depsCompleted) || isCompleted
 
                   return (
                     <Card
@@ -330,6 +400,11 @@ export function PipelinePage() {
                            stageStatus === 'running' ? '运行中' :
                            stageStatus === 'failed' ? '失败' : '待执行'}
                         </Tag>
+                        {depsPending.length > 0 && !isCompleted && !isRunning && (
+                          <Text type="secondary" style={{ fontSize: 11, color: '#faad14' }}>
+                            前置阶段: {depsPending.map(d => ({ prosody: '韵律分析', emotion: '情绪识别', fusion: '情绪融合', face_analysis: '人脸分析', stt: '文字提取' }[d] || d)).join(', ')}
+                          </Text>
+                        )}
                         <Text type="secondary" style={{ fontSize: 12 }}>{stageDesc}</Text>
                         <Button
                           type={isCompleted ? 'default' : 'primary'}

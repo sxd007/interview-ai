@@ -84,6 +84,7 @@ const calcBaselineByPrefix = (segments: Segment[], speakersList: Speaker[], seco
 export function SpeakerProsodyPanel({ segments, speakers }: Props) {
   const [showAllSpeakers, setShowAllSpeakers] = useState(true)
   const [selectedSpeakerId, setSelectedSpeakerId] = useState<string | null>(null)
+  const [legendHidden, setLegendHidden] = useState<Record<string, boolean>>({})
   
   const [baselineMode, setBaselineMode] = useState<BaselineMode>('percentile')
   const [percentileLower, setPercentileLower] = useState(25)
@@ -96,74 +97,176 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
     ? segments
     : segments.filter(seg => seg.speaker_id === selectedSpeakerId)
 
-  const speakerOptions = speakers.map((s, i) => ({
+  const speakerOptions = speakers.map((s, _i) => ({
     value: s.id,
-    label: (
-      <Space>
-        <div style={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: s.color || CHART_COLORS[i % CHART_COLORS.length] }} />
-        {s.label}
-      </Space>
-    )
+    label: s.label,
   }))
 
-  const allSegmentsWithSpeaker = filteredSegments
-    .filter((seg) => seg.prosody)
-    .map((seg) => {
-      const speakerIdx = speakers.findIndex(s => s.id === seg.speaker_id)
-      return {
-        time: Math.round(seg.start_time),
-        timeLabel: formatTime(seg.start_time),
-        speaker_id: seg.speaker_id,
-        speaker_label: seg.speaker_label || speakers[speakerIdx]?.label || '未知',
-        speaker_color: speakers[speakerIdx]?.color || CHART_COLORS[speakerIdx % CHART_COLORS.length],
-        pitch_mean: seg.prosody?.pitch_mean ? Math.round(seg.prosody.pitch_mean) : null,
-        pitch_std: seg.prosody?.pitch_std ? Math.round(seg.prosody.pitch_std) : null,
-        energy_mean: seg.prosody?.energy_mean ? Math.round(seg.prosody.energy_mean * 100) : null,
-        speech_rate: seg.prosody?.speech_rate ? Math.round(seg.prosody.speech_rate * 10) / 10 : null,
-        pause_ratio: seg.prosody?.pause_ratio ? Math.round(seg.prosody.pause_ratio * 100) : null,
-        filler_count: seg.prosody?.filler_count || 0,
+  const allTimePoints = useMemo(() => {
+    if (filteredSegments.length === 0) return []
+    const maxTime = Math.max(...filteredSegments.map(s => s.end_time || s.start_time))
+    const minTime = Math.min(...filteredSegments.map(s => s.start_time))
+    const result: number[] = []
+    for (let t = Math.floor(minTime); t <= Math.ceil(maxTime); t += 1) {
+      result.push(t)
+    }
+    return result
+  }, [filteredSegments])
+
+  const allSpeakersData = useMemo(() => {
+    const speakerMap: Record<string, Record<number, any>> = {}
+    
+    speakers.forEach(speaker => {
+      speakerMap[speaker.id] = {}
+      const spkSegments = filteredSegments.filter(s => s.speaker_id === speaker.id)
+      const speakerIdx = speakers.findIndex(s => s.id === speaker.id)
+      
+      allTimePoints.forEach(time => {
+        const seg = spkSegments.find(s => time >= Math.floor(s.start_time) && time < Math.ceil(s.end_time || s.start_time + 1))
+        
+        if (seg && seg.prosody) {
+          const prosody = seg.prosody
+          const hasPitch = prosody.pitch_mean && prosody.pitch_mean > 0
+          speakerMap[speaker.id][time] = {
+            time,
+            timeLabel: formatTime(time),
+            speaker_id: speaker.id,
+            speaker_label: speaker.label,
+            speaker_color: speaker.color || CHART_COLORS[speakerIdx % CHART_COLORS.length],
+            pitch_mean: hasPitch && prosody.pitch_mean ? Math.round(prosody.pitch_mean) : null,
+            pitch_std: prosody.pitch_std ? Math.round(prosody.pitch_std) : null,
+            energy_mean: prosody.energy_mean ? Math.round(prosody.energy_mean * 100) : null,
+            speech_rate: prosody.speech_rate ? Math.round(prosody.speech_rate * 10) / 10 : null,
+            pause_ratio: prosody.pause_ratio ? Math.round(prosody.pause_ratio * 100) : null,
+            filler_count: prosody.filler_count || 0,
+            hasData: true,
+          }
+        } else {
+          speakerMap[speaker.id][time] = {
+            time,
+            timeLabel: formatTime(time),
+            speaker_id: speaker.id,
+            speaker_label: speaker.label,
+            speaker_color: speaker.color || CHART_COLORS[speakerIdx % CHART_COLORS.length],
+            pitch_mean: null,
+            pitch_std: null,
+            energy_mean: null,
+            speech_rate: null,
+            pause_ratio: null,
+            filler_count: 0,
+            hasData: false,
+          }
+        }
+      })
+    })
+    
+    return speakerMap
+  }, [speakers, filteredSegments, allTimePoints])
+
+  const chartData = allTimePoints.map(time => {
+    const result: any = { time, timeLabel: formatTime(time) }
+    speakers.forEach(speaker => {
+      const point = allSpeakersData[speaker.id]?.[time]
+      if (point) {
+        result[`${speaker.id}_pitch`] = point.pitch_mean
+        result[`${speaker.id}_energy`] = point.energy_mean
+        result[`${speaker.id}_speech_rate`] = point.speech_rate
+        result[`${speaker.id}_pause_ratio`] = point.pause_ratio
       }
     })
-
-  const chartData = allSegmentsWithSpeaker
-
+    return result
+  })
+  
   const tickFormatter = (val: number) => formatTime(val)
 
-  const globalBaseline = useMemo(() => {
-    if (baselineMode === 'percentile') {
-      return calcBaselineByPercentile(filteredSegments, percentileLower, percentileUpper)
-    } else if (baselineMode === 'range') {
-      return calcBaselineByRange(filteredSegments, customRangeStart, customRangeEnd)
-    }
-    return null
-  }, [filteredSegments, baselineMode, percentileLower, percentileUpper, customRangeStart, customRangeEnd])
+  const visibleSpeakers = showAllSpeakers
+    ? speakers.filter(s => !legendHidden[s.id])
+    : speakers.filter(s => s.id === selectedSpeakerId)
 
-  const speakerBaselines = useMemo(() => {
-    if (baselineMode === 'prefix') {
-      return calcBaselineByPrefix(segments, speakers, prefixSeconds)
-    }
-    return {}
-  }, [segments, speakers, baselineMode, prefixSeconds])
+  const speakerDataMap = useMemo(() => {
+    return visibleSpeakers.map((speaker, idx) => {
+      const originalSpeakerSegments = filteredSegments.filter(s => s.speaker_id === speaker.id)
+      const speakerTimeData = allTimePoints.map(time => allSpeakersData[speaker.id]?.[time]).filter(Boolean)
+      
+      let baseline = { lower: 0, upper: 0 }
+      
+      if (baselineMode === 'percentile') {
+        baseline = calcBaselineByPercentile(originalSpeakerSegments, percentileLower, percentileUpper)
+      } else if (baselineMode === 'range') {
+        const rangeBaseline = calcBaselineByRange(originalSpeakerSegments, customRangeStart, customRangeEnd)
+        if (rangeBaseline) baseline = rangeBaseline
+      } else if (baselineMode === 'prefix') {
+        const prefixBaseline = calcBaselineByPrefix(segments, speakers, prefixSeconds)
+        if (prefixBaseline[speaker.id]) baseline = prefixBaseline[speaker.id]
+      }
+      
+      return {
+        speakerId: speaker.id,
+        speakerLabel: speaker.label,
+        color: speaker.color || CHART_COLORS[idx % CHART_COLORS.length],
+        baseline,
+        segments: speakerTimeData,
+      }
+    })
+  }, [speakers, filteredSegments, allTimePoints, allSpeakersData, baselineMode, percentileLower, percentileUpper, customRangeStart, customRangeEnd, prefixSeconds, segments])
 
-  const speakerDataMap = speakers.map((speaker, idx) => {
-    const speakerSegments = allSegmentsWithSpeaker.filter(s => s.speaker_id === speaker.id)
-    const baseline = baselineMode === 'prefix' 
-      ? speakerBaselines[speaker.id] 
-      : (globalBaseline || { lower: 0, upper: 0 })
-    return {
-      speakerId: speaker.id,
-      speakerLabel: speaker.label,
-      color: speaker.color || CHART_COLORS[idx % CHART_COLORS.length],
-      baseline,
-      segments: speakerSegments,
-    }
-  })
+  const avgPitchData = useMemo(() => {
+    let sum = 0, count = 0
+    speakers.forEach(speaker => {
+      chartData.forEach(d => {
+        const val = d[`${speaker.id}_pitch`]
+        if (val !== null && val !== undefined) {
+          sum += val
+          count++
+        }
+      })
+    })
+    return count > 0 ? sum / count : 0
+  }, [chartData, speakers])
 
-  const avgPitch = chartData.reduce((sum, d) => sum + (d.pitch_mean || 0), 0) / (chartData.filter(d => d.pitch_mean).length || 1)
-  const avgEnergy = chartData.reduce((sum, d) => sum + (d.energy_mean || 0), 0) / (chartData.filter(d => d.energy_mean).length || 1)
-  const avgSpeechRate = chartData.reduce((sum, d) => sum + (d.speech_rate || 0), 0) / (chartData.filter(d => d.speech_rate).length || 1)
-  const totalFillers = chartData.reduce((sum, d) => sum + d.filler_count, 0)
-  const avgPause = chartData.reduce((sum, d) => sum + (d.pause_ratio || 0), 0) / (chartData.length || 1)
+  const avgEnergyData = useMemo(() => {
+    let sum = 0, count = 0
+    speakers.forEach(speaker => {
+      chartData.forEach(d => {
+        const val = d[`${speaker.id}_energy`]
+        if (val !== null && val !== undefined) {
+          sum += val
+          count++
+        }
+      })
+    })
+    return count > 0 ? sum / count : 0
+  }, [chartData, speakers])
+
+  const avgSpeechRateData = useMemo(() => {
+    let sum = 0, count = 0
+    speakers.forEach(speaker => {
+      chartData.forEach(d => {
+        const val = d[`${speaker.id}_speech_rate`]
+        if (val !== null && val !== undefined) {
+          sum += val
+          count++
+        }
+      })
+    })
+    return count > 0 ? sum / count : 0
+  }, [chartData, speakers])
+
+  const avgPauseData = useMemo(() => {
+    let sum = 0, count = 0
+    speakers.forEach(speaker => {
+      chartData.forEach(d => {
+        const val = d[`${speaker.id}_pause_ratio`]
+        if (val !== null && val !== undefined) {
+          sum += val
+          count++
+        }
+      })
+    })
+    return count > 0 ? sum / count : 0
+  }, [chartData, speakers])
+
+  const totalFillers = filteredSegments.reduce((sum, seg) => sum + (seg.prosody?.filler_count || 0), 0)
 
   const comparisonData = speakers.map((speaker, idx) => {
     const spkSegments = segments.filter(s => s.speaker_id === speaker.id && s.prosody)
@@ -182,6 +285,13 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
   const handleSpeakerChange = (value: string | null) => {
     setSelectedSpeakerId(value)
     setShowAllSpeakers(value === null)
+  }
+
+  const onLegendClick = (e: any) => {
+    if (e.dataKey) {
+      const key = e.dataKey.replace('_pitch', '').replace('_energy', '').replace('_speech_rate', '').replace('_pause_ratio', '')
+      setLegendHidden(prev => ({ ...prev, [key]: !prev[key] }))
+    }
   }
 
   return (
@@ -222,7 +332,7 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
                 value={percentileLower}
                 onChange={(v) => setPercentileLower(v || 25)}
                 size="small"
-                style={{ width: 60 }}
+                style={{ width: 80 }}
                 addonAfter="%"
               />
               <Text>~</Text>
@@ -232,7 +342,7 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
                 value={percentileUpper}
                 onChange={(v) => setPercentileUpper(v || 40)}
                 size="small"
-                style={{ width: 60 }}
+                style={{ width: 80 }}
                 addonAfter="%"
               />
               <Text type="secondary">(25-40%分位数区间作为baseline)</Text>
@@ -246,7 +356,7 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
                 value={customRangeStart}
                 onChange={(v) => setCustomRangeStart(v || 0)}
                 size="small"
-                style={{ width: 70 }}
+                style={{ width: 100 }}
                 addonAfter="秒"
                 placeholder="开始"
               />
@@ -256,7 +366,7 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
                 value={customRangeEnd}
                 onChange={(v) => setCustomRangeEnd(v || 60)}
                 size="small"
-                style={{ width: 70 }}
+                style={{ width: 100 }}
                 addonAfter="秒"
                 placeholder="结束"
               />
@@ -271,18 +381,16 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
                 value={prefixSeconds}
                 onChange={(v) => setPrefixSeconds(v || 180)}
                 size="small"
-                style={{ width: 80 }}
+                style={{ width: 100 }}
                 addonAfter="秒"
               />
               <Text type="secondary">(开头N秒作为各人baseline，按人分别计算)</Text>
             </Space>
           )}
 
-          {globalBaseline && baselineMode !== 'prefix' && (
-            <Text type="secondary" style={{ marginLeft: 16 }}>
-              当前Baseline: {Math.round(globalBaseline.lower)} ~ {Math.round(globalBaseline.upper)} Hz
-            </Text>
-          )}
+          <Text type="secondary" style={{ marginLeft: 16 }}>
+            (按说话人分别计算baseline)
+          </Text>
         </Space>
       </Card>
 
@@ -291,7 +399,7 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
           <Card size="small">
             <Statistic
               title="平均音高 (Hz)"
-              value={Math.round(avgPitch)}
+              value={Math.round(avgPitchData)}
               precision={0}
             />
           </Card>
@@ -300,7 +408,7 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
           <Card size="small">
             <Statistic
               title="平均能量"
-              value={Math.round(avgEnergy)}
+              value={Math.round(avgEnergyData)}
               precision={0}
             />
           </Card>
@@ -309,7 +417,7 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
           <Card size="small">
             <Statistic
               title="语速 (词/秒)"
-              value={avgSpeechRate}
+              value={avgSpeechRateData}
               precision={1}
             />
           </Card>
@@ -327,9 +435,9 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
           <Card size="small">
             <Statistic
               title="停顿比例"
-              value={Math.round(avgPause)}
+              value={Math.round(avgPauseData)}
               suffix="%"
-              valueStyle={{ color: avgPause > 30 ? '#E6A23C' : '#67C23A' }}
+              valueStyle={{ color: avgPauseData > 30 ? '#E6A23C' : '#67C23A' }}
             />
           </Card>
         </Col>
@@ -337,7 +445,7 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
           <Card size="small">
             <Statistic
               title="分析段落"
-              value={chartData.length}
+              value={filteredSegments.length}
             />
           </Card>
         </Col>
@@ -378,7 +486,7 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
             <ResponsiveContainer width="100%" height={300}>
               <ComposedChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="time" tickFormatter={tickFormatter} />
+                <XAxis dataKey="time" type="number" tickFormatter={tickFormatter} domain={['dataMin', 'dataMax']} />
                 <YAxis />
                 <Tooltip 
                   formatter={(value: number, name: string) => {
@@ -387,36 +495,43 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
                   }}
                   labelFormatter={(label) => `时间: ${formatTime(label)}`}
                 />
-                <Legend />
+                <Legend onClick={onLegendClick} />
                 {speakerDataMap.map((spk) => (
                   <Line
                     key={spk.speakerId}
                     type="monotone"
-                    dataKey="pitch_mean"
-                    data={spk.segments}
+                    dataKey={`${spk.speakerId}_pitch`}
+                    data={chartData}
                     stroke={spk.color}
                     strokeWidth={2}
                     name={`${spk.speakerLabel} 音高`}
                     dot={false}
-                    connectNulls
+                    connectNulls={false}
+                    hide={legendHidden[spk.speakerId]}
                   />
                 ))}
                 {speakerDataMap.map((spk) => {
                   const bl = spk.baseline
-                  if (!bl || bl.lower <= 0) return null
+                  console.log(`Speaker ${spk.speakerLabel}: baseline =`, bl)
+                  if (!bl || (bl.lower === 0 && bl.upper === 0)) return null
                   const xMin = Math.min(...chartData.map(d => d.time))
                   const xMax = Math.max(...chartData.map(d => d.time))
                   return (
-                    <ReferenceArea
-                      key={`${spk.speakerId}-baseline`}
-                      x1={xMin}
-                      x2={xMax}
-                      y1={bl.lower}
-                      y2={bl.upper}
-                      strokeOpacity={0.3}
-                      fill={spk.color}
-                      fillOpacity={0.1}
-                    />
+                    <>
+                      <ReferenceLine y={bl.lower} stroke={spk.color} strokeDasharray="3 3" />
+                      <ReferenceLine y={bl.upper} stroke={spk.color} strokeDasharray="3 3" />
+                      <ReferenceArea
+                        key={`${spk.speakerId}-baseline`}
+                        x1={xMin}
+                        x2={xMax}
+                        y1={bl.lower}
+                        y2={bl.upper}
+                        stroke={spk.color}
+                        strokeOpacity={0.3}
+                        fill={spk.color}
+                        fillOpacity={0.15}
+                      />
+                    </>
                   )
                 })}
                 <ReferenceLine y={0} stroke="#999" />
@@ -435,20 +550,21 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
                 <ResponsiveContainer width="100%" height={200}>
                   <LineChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="time" tickFormatter={tickFormatter} />
+                    <XAxis dataKey="time" type="number" tickFormatter={tickFormatter} domain={['dataMin', 'dataMax']} />
                     <YAxis />
                     <Tooltip />
-                    <Legend />
+                    <Legend onClick={onLegendClick} />
                     {speakerDataMap.map((spk) => (
                       <Line
                         key={spk.speakerId}
                         type="monotone"
-                        dataKey="energy_mean"
-                        data={spk.segments}
+                        dataKey={`${spk.speakerId}_energy`}
+                        data={chartData}
                         stroke={spk.color}
                         name={`${spk.speakerLabel} 能量`}
                         dot={false}
-                        connectNulls
+                        connectNulls={false}
+                        hide={legendHidden[spk.speakerId]}
                       />
                     ))}
                   </LineChart>
@@ -460,22 +576,23 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
                 <ResponsiveContainer width="100%" height={200}>
                   <LineChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="time" tickFormatter={tickFormatter} />
+                    <XAxis dataKey="time" type="number" tickFormatter={tickFormatter} domain={['dataMin', 'dataMax']} />
                     <YAxis yAxisId="left" />
                     <YAxis yAxisId="right" orientation="right" />
                     <Tooltip />
-                    <Legend />
+                    <Legend onClick={onLegendClick} />
                     {speakerDataMap.map((spk) => (
                       <Line
                         key={`${spk.speakerId}-sr`}
                         yAxisId="left"
                         type="monotone"
-                        dataKey="speech_rate"
-                        data={spk.segments}
+                        dataKey={`${spk.speakerId}_speech_rate`}
+                        data={chartData}
                         stroke={spk.color}
                         name={`${spk.speakerLabel} 语速`}
                         dot={false}
-                        connectNulls
+                        connectNulls={false}
+                        hide={legendHidden[spk.speakerId]}
                       />
                     ))}
                     {speakerDataMap.map((spk) => (
@@ -483,13 +600,14 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
                         key={`${spk.speakerId}-pr`}
                         yAxisId="right"
                         type="monotone"
-                        dataKey="pause_ratio"
-                        data={spk.segments}
+                        dataKey={`${spk.speakerId}_pause_ratio`}
+                        data={chartData}
                         stroke={spk.color}
                         strokeDasharray="3 3"
                         name={`${spk.speakerLabel} 停顿%`}
                         dot={false}
-                        connectNulls
+                        connectNulls={false}
+                        hide={legendHidden[spk.speakerId]}
                       />
                     ))}
                   </LineChart>

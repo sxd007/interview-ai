@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Card, Typography, Space, Spin, Tag, Button, Divider, Slider, Row, Col, Empty } from 'antd'
 import { PlayCircleOutlined, PauseCircleOutlined, StepBackwardOutlined, StepForwardOutlined, ClockCircleOutlined, TeamOutlined } from '@ant-design/icons'
 import { interviewApi, transcriptApi, pipelineApi } from '../services/api'
+import { SpeakerProsodyPanel } from '../components/SpeakerProsodyPanel'
 
 const { Text } = Typography
 
@@ -136,21 +137,36 @@ export function InterviewPlayerPage() {
           )}
 
           {activeTab === 'analysis' && (
-            <Row gutter={16}>
-              {fusionSummaries.map(speaker => (
-                <Col span={24} key={speaker.speaker_id} style={{ marginBottom: 16 }}>
-                  <Card size="small">
-                    <Space><div style={{ width: 16, height: 16, borderRadius: '50%', backgroundColor: speaker.speaker_color }} /><Text strong>{speaker.speaker_label}</Text><Tag>{formatTime(speaker.total_duration)}</Tag></Space>
-                    <Divider style={{ margin: '12px 0' }} />
-                    <Row gutter={16}>
-                      <Col span={8}><Text type="secondary">主导情绪</Text><div><Tag color={emotionColor(speaker.emotion?.dominant_emotion)}>{speaker.emotion?.dominant_emotion || 'neutral'}</Tag></div></Col>
-                      <Col span={8}><Text type="secondary">语速</Text><div><Text>{speaker.prosody?.speech_rate?.toFixed(1) || '-'} 字/秒</Text></div></Col>
-                      <Col span={8}><Text type="secondary">停顿比例</Text><div><Text>{((speaker.prosody?.pause_ratio || 0) * 100).toFixed(1)}%</Text></div></Col>
-                    </Row>
-                  </Card>
-                </Col>
-              ))}
-            </Row>
+            <div>
+              <SpeakerProsodyPanel segments={segments} speakers={speakers} />
+              <Divider />
+              <Text strong style={{ fontSize: 16, display: 'block', marginBottom: 16 }}>说话人汇总</Text>
+              <Row gutter={16}>
+                {fusionSummaries.map(speaker => (
+                  <Col span={24} key={speaker.speaker_id} style={{ marginBottom: 16 }}>
+                    <Card size="small">
+                      <Space><div style={{ width: 16, height: 16, borderRadius: '50%', backgroundColor: speaker.speaker_color }} /><Text strong>{speaker.speaker_label}</Text><Tag>{formatTime(speaker.total_duration)}</Tag></Space>
+                      <Divider style={{ margin: '12px 0' }} />
+                      <Row gutter={16}>
+                        <Col span={8}><Text type="secondary">主导情绪</Text><div><Tag color={emotionColor(speaker.emotion?.dominant_emotion)}>{speaker.emotion?.dominant_emotion || 'neutral'}</Tag></div></Col>
+                        <Col span={8}><Text type="secondary">语速</Text><div><Text>{speaker.prosody?.speech_rate?.toFixed(1) || '-'} 字/秒</Text></div></Col>
+                        <Col span={8}><Text type="secondary">停顿比例</Text><div><Text>{((speaker.prosody?.pause_ratio || 0) * 100).toFixed(1)}%</Text></div></Col>
+                      </Row>
+                      {speaker.emotion?.emotion_counts && Object.keys(speaker.emotion.emotion_counts).length > 0 && (
+                        <div style={{ marginTop: 8 }}>
+                          <Text type="secondary">情绪分布: </Text>
+                          {Object.entries(speaker.emotion.emotion_counts).map(([emotion, count]) => (
+                            <Tag key={emotion} color={emotionColor(emotion)} style={{ marginLeft: 4 }}>
+                              {emotion}: {String(count)}
+                            </Tag>
+                          ))}
+                        </div>
+                      )}
+                    </Card>
+                  </Col>
+                ))}
+              </Row>
+            </div>
           )}
         </div>
       </div>

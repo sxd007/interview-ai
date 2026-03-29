@@ -44,8 +44,8 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
     .map((seg) => {
       const speakerIdx = speakers.findIndex(s => s.id === seg.speaker_id)
       return {
-        time: formatTime(seg.start_time),
-        start: Math.round(seg.start_time),
+        time: Math.round(seg.start_time),
+        timeLabel: formatTime(seg.start_time),
         speaker_id: seg.speaker_id,
         speaker_label: seg.speaker_label || speakers[speakerIdx]?.label || '未知',
         speaker_color: speakers[speakerIdx]?.color || CHART_COLORS[speakerIdx % CHART_COLORS.length],
@@ -59,6 +59,8 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
     })
 
   const chartData = allSegmentsWithSpeaker
+
+  const tickFormatter = (val: number) => formatTime(val)
 
   const speakerDataMap = speakers.map((speaker, idx) => {
     const speakerSegments = allSegmentsWithSpeaker.filter(s => s.speaker_id === speaker.id)
@@ -200,7 +202,7 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
             <ResponsiveContainer width="100%" height={250}>
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="time" />
+                <XAxis dataKey="time" tickFormatter={tickFormatter} />
                 <YAxis />
                 <Tooltip />
                 <Legend />
@@ -239,7 +241,7 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
                 <ResponsiveContainer width="100%" height={200}>
                   <LineChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="time" />
+                    <XAxis dataKey="time" tickFormatter={tickFormatter} />
                     <YAxis />
                     <Tooltip />
                     <Legend />
@@ -264,7 +266,7 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
                 <ResponsiveContainer width="100%" height={200}>
                   <LineChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="time" />
+                    <XAxis dataKey="time" tickFormatter={tickFormatter} />
                     <YAxis yAxisId="left" />
                     <YAxis yAxisId="right" orientation="right" />
                     <Tooltip />

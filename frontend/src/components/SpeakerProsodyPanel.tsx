@@ -180,26 +180,32 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
   const tickFormatter = (val: number) => formatTime(val)
 
   const visibleSpeakers = showAllSpeakers
-    ? speakers.filter(s => !legendHidden[s.id])
+    ? speakers
     : speakers.filter(s => s.id === selectedSpeakerId)
 
   const speakerDataMap = useMemo(() => {
-    return visibleSpeakers.map((speaker, idx) => {
-      const originalSpeakerSegments = filteredSegments.filter(s => s.speaker_id === speaker.id)
+    return speakers.map((speaker, idx) => {
+      // 只为未被隐藏的说话人计算 baseline
+      const isHidden = legendHidden[speaker.id]
+      const originalSpeakerSegments = segments.filter(s => s.speaker_id === speaker.id && !isHidden)
       const speakerTimeData = allTimePoints.map(time => allSpeakersData[speaker.id]?.[time]).filter(Boolean)
-      
+
       let baseline = { lower: 0, upper: 0 }
-      
-      if (baselineMode === 'percentile') {
-        baseline = calcBaselineByPercentile(originalSpeakerSegments, percentileLower, percentileUpper)
-      } else if (baselineMode === 'range') {
-        const rangeBaseline = calcBaselineByRange(originalSpeakerSegments, customRangeStart, customRangeEnd)
-        if (rangeBaseline) baseline = rangeBaseline
-      } else if (baselineMode === 'prefix') {
-        const prefixBaseline = calcBaselineByPrefix(segments, speakers, prefixSeconds)
-        if (prefixBaseline[speaker.id]) baseline = prefixBaseline[speaker.id]
+
+      // 如果说话人被隐藏，或者根本不在当前过滤结果中，则不计算 baseline
+      const isVisibleInFilter = !showAllSpeakers ? speaker.id === selectedSpeakerId : true
+      if (isVisibleInFilter && !isHidden) {
+        if (baselineMode === 'percentile') {
+          baseline = calcBaselineByPercentile(originalSpeakerSegments, percentileLower, percentileUpper)
+        } else if (baselineMode === 'range') {
+          const rangeBaseline = calcBaselineByRange(originalSpeakerSegments, customRangeStart, customRangeEnd)
+          if (rangeBaseline) baseline = rangeBaseline
+        } else if (baselineMode === 'prefix') {
+          const prefixBaseline = calcBaselineByPrefix(segments, speakers, prefixSeconds)
+          if (prefixBaseline[speaker.id]) baseline = prefixBaseline[speaker.id]
+        }
       }
-      
+
       return {
         speakerId: speaker.id,
         speakerLabel: speaker.label,
@@ -208,7 +214,7 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
         segments: speakerTimeData,
       }
     })
-  }, [speakers, filteredSegments, allTimePoints, allSpeakersData, baselineMode, percentileLower, percentileUpper, customRangeStart, customRangeEnd, prefixSeconds, segments])
+  }, [speakers, segments, allTimePoints, allSpeakersData, baselineMode, percentileLower, percentileUpper, customRangeStart, customRangeEnd, prefixSeconds, showAllSpeakers, selectedSpeakerId, legendHidden])
 
   const avgPitchData = useMemo(() => {
     let sum = 0, count = 0
@@ -290,6 +296,7 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
   const onLegendClick = (e: any) => {
     if (e.dataKey) {
       const key = e.dataKey.replace('_pitch', '').replace('_energy', '').replace('_speech_rate', '').replace('_pause_ratio', '')
+      console.log('Legend clicked:', { dataKey: e.dataKey, extractedKey: key, currentValue: legendHidden[key], newValue: !legendHidden[key] })
       setLegendHidden(prev => ({ ...prev, [key]: !prev[key] }))
     }
   }
@@ -516,10 +523,11 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
                   if (!bl || (bl.lower === 0 && bl.upper === 0)) return null
                   const xMin = Math.min(...chartData.map(d => d.time))
                   const xMax = Math.max(...chartData.map(d => d.time))
+                  const isHidden = legendHidden[spk.speakerId]
                   return (
                     <>
-                      <ReferenceLine y={bl.lower} stroke={spk.color} strokeDasharray="3 3" />
-                      <ReferenceLine y={bl.upper} stroke={spk.color} strokeDasharray="3 3" />
+                      <ReferenceLine y={bl.lower} stroke={spk.color} strokeDasharray="3 3" hide={isHidden} />
+                      <ReferenceLine y={bl.upper} stroke={spk.color} strokeDasharray="3 3" hide={isHidden} />
                       <ReferenceArea
                         key={`${spk.speakerId}-baseline`}
                         x1={xMin}
@@ -530,6 +538,7 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
                         strokeOpacity={0.3}
                         fill={spk.color}
                         fillOpacity={0.15}
+                        hide={isHidden}
                       />
                     </>
                   )

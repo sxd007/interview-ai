@@ -26,6 +26,7 @@ export interface Interview {
   chunk_duration?: number
   chunk_count?: number
   is_chunked?: boolean
+  video_url?: string
 }
 
 export interface VideoChunk {
@@ -285,6 +286,16 @@ export const pipelineApi = {
 
   getStages: (id: string) =>
     api.get<{ stages: PipelineStage[] }>(`/interviews/${id}/pipeline`),
+
+  mergeSpeakers: (id: string) =>
+    api.post<{ success: boolean; merged_groups: number; speakers_merged: number }>(
+      `/interviews/${id}/pipeline/merge-speakers`
+    ),
+
+  getMergeStatus: (id: string) =>
+    api.get<{ is_merged: boolean; merged_count: number }>(
+      `/interviews/${id}/pipeline/merge-status`
+    ),
 }
 
 export default api

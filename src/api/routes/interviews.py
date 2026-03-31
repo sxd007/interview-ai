@@ -105,7 +105,29 @@ async def get_interview(interview_id: str, db: Session = Depends(get_db)):
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Interview not found: {interview_id}",
         )
-    return interview
+    
+    # Build video URL
+    video_url = None
+    if interview.file_path:
+        # Convert file_path to URL format
+        video_url = f"/data/{interview.file_path.replace('data/', '')}" if interview.file_path.startswith('data/') else f"/data/{interview.file_path}"
+    
+    response = InterviewResponse(
+        id=interview.id,
+        filename=interview.filename,
+        duration=interview.duration,
+        fps=interview.fps,
+        resolution=interview.resolution,
+        status=interview.status,
+        error_message=interview.error_message,
+        created_at=interview.created_at,
+        chunk_duration=interview.chunk_duration,
+        chunk_count=interview.chunk_count,
+        is_chunked=interview.is_chunked,
+        updated_at=interview.updated_at,
+        video_url=video_url,
+    )
+    return response
 
 
 @router.delete("/{interview_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["interviews"])

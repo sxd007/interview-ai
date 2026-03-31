@@ -709,10 +709,6 @@ async def get_transcript(interview_id: str, db: Session = Depends(get_db)):
             detail="No chunk has completed processing yet",
         )
 
-    # Auto-merge speakers with same label across chunks
-    from src.services.pipeline.cascade_engine import merge_speakers_by_label
-    merge_speakers_by_label(db, interview_id)
-
     # Only return speakers that haven't been merged into another speaker
     speakers = db.query(Speaker).filter(
         Speaker.interview_id == interview_id,

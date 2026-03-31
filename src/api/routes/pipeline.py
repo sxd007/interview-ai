@@ -150,8 +150,23 @@ def run_pipeline_stage(
             result = _run_keyframes(db, interview)
         elif stage_name == "prosody":
             result = _run_prosody(db, interview)
+        elif stage_name == "emotion":
+            result = _run_emotion(db, interview)
+        elif stage_name == "fusion":
+            result = _run_fusion(db, interview)
         else:
             raise HTTPException(status_code=400, detail=f"Stage '{stage_name}' not yet implemented")
+
+        # Update stage status in database
+        stage = db.query(PipelineStage).filter(
+            PipelineStage.interview_id == interview_id,
+            PipelineStage.stage_name == stage_name,
+        ).first()
+        if stage:
+            stage.status = StageStatus.COMPLETED.value
+            stage.completed_at = datetime.utcnow()
+            db.commit()
+            logger.info(f"[run_pipeline_stage] Stage '{stage_name}' marked as COMPLETED")
 
         return {"status": "completed", "stage": stage_name, "result": result}
     except Exception as e:
@@ -341,6 +356,45 @@ def run_all_stages(
     return {"results": results}
 
 
+@router.post("/{interview_id}/pipeline/merge-speakers")
+def merge_all_speakers(
+    interview_id: str,
+    db: Session = Depends(get_db),
+):
+    interview = db.query(Interview).filter(Interview.id == interview_id).first()
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview not found")
+
+    from src.services.pipeline.cascade_engine import merge_speakers_by_label
+    result = merge_speakers_by_label(db, interview_id)
+    
+    return {
+        "success": True,
+        "merged_groups": result.get("merged_groups", 0),
+        "speakers_merged": result.get("speakers_merged", 0),
+    }
+
+
+@router.get("/{interview_id}/pipeline/merge-status")
+def get_merge_status(
+    interview_id: str,
+    db: Session = Depends(get_db),
+):
+    interview = db.query(Interview).filter(Interview.id == interview_id).first()
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview not found")
+
+    merged_count = db.query(Speaker).filter(
+        Speaker.interview_id == interview_id,
+        Speaker.merged_into != None
+    ).count()
+
+    return {
+        "is_merged": merged_count > 0,
+        "merged_count": merged_count,
+    }
+
+
 def _run_audio_extract(db, interview, hf_token):
     import soundfile as sf
     processor = AudioProcessor()
@@ -497,21 +551,17 @@ def _run_keyframes(db, interview):
 def _run_prosody(db: Session, interview):
     from src.services.audio.processor import AudioProcessor
     from src.services.audio.prosody import ProsodyAnalyzer
-    from src.models.database import AudioSegment, VideoChunk
+    from src.models.database import AudioSegment
     
     processor = AudioProcessor()
     
-    # 尝试复用已有的音频（STT 阶段已提取）
+    # 使用原始完整访谈音频进行分析，而非单个chunk
     audio_path = None
-    chunks = db.query(VideoChunk).filter(VideoChunk.interview_id == interview.id).all()
-    for chunk in chunks:
-        if chunk.audio_path:
-            audio_path = chunk.audio_path
-            break
-    
-    # 如果没有已提取的音频，才需要重新提取
-    if not audio_path:
+    if interview.file_path:
         audio_path, _ = processor.extract_audio(interview.file_path)
+    
+    if not audio_path:
+        return {"error": "No audio file found"}
     
     raw_audio, sr = processor.load_audio(audio_path)
     
@@ -533,13 +583,122 @@ def _run_prosody(db: Session, interview):
         return {"error": "No segments found"}
     
     results = prosody_analyzer.analyze_segments(raw_audio, sr, segments_data)
+    print(f"[prosody] analyze_segments returned {len(results)} results")
     
     for i, seg in enumerate(segments):
         if i < len(results):
             seg.prosody = results[i]
     
+    print(f"[prosody] Updated {min(len(segments), len(results))} segments with prosody data")
+    
     db.commit()
     return {"segments_analyzed": len(segments)}
+
+
+def _run_emotion(db: Session, interview):
+    from src.services.audio.processor import AudioProcessor
+    from src.inference.emotion.engine import VoiceEmotionEngine
+    from src.models.database import AudioSegment
+    
+    processor = AudioProcessor()
+    
+    # 使用原始完整访谈音频进行分析，而非单个chunk
+    audio_path = None
+    if interview.file_path:
+        audio_path, _ = processor.extract_audio(interview.file_path)
+    
+    if not audio_path:
+        return {"error": "No audio file found"}
+    
+    raw_audio, sr = processor.load_audio(audio_path)
+    
+    emotion_engine = VoiceEmotionEngine()
+    emotion_engine.load()
+    
+    segments = db.query(AudioSegment).filter(
+        AudioSegment.interview_id == interview.id
+    ).order_by(AudioSegment.start_time).all()
+    
+    segments_data = []
+    for seg in segments:
+        segments_data.append({
+            "start": seg.start_time,
+            "end": seg.end_time,
+        })
+    
+    if not segments_data:
+        return {"error": "No segments found"}
+    
+    results = emotion_engine.predict_segments(raw_audio, sr, segments_data)
+    print(f"[emotion] predict_segments returned {len(results)} results")
+    
+    for i, seg in enumerate(segments):
+        if i < len(results):
+            seg.emotion_scores = results[i]
+    
+    print(f"[emotion] Updated {min(len(segments), len(results))} segments with emotion data")
+    
+    db.commit()
+    return {"segments_analyzed": len(segments)}
+
+
+def _run_fusion(db: Session, interview):
+    from src.models.database import AudioSegment, Speaker
+    
+    speakers = db.query(Speaker).filter(
+        Speaker.interview_id == interview.id,
+        Speaker.merged_into == None,
+    ).all()
+    
+    speaker_summaries = []
+    for speaker in speakers:
+        segments = db.query(AudioSegment).filter(
+            AudioSegment.interview_id == interview.id,
+            AudioSegment.speaker_id == speaker.id,
+        ).all()
+        
+        prosody_values = [s.prosody for s in segments if s.prosody]
+        emotion_values = [s.emotion_scores for s in segments if s.emotion_scores]
+        
+        prosody_summary = {}
+        if prosody_values:
+            prosody_summary = {
+                "pitch_mean": sum(p.get("pitch_mean", 0) for p in prosody_values) / len(prosody_values),
+                "pitch_std": sum(p.get("pitch_std", 0) for p in prosody_values) / len(prosody_values),
+                "speech_rate": sum(p.get("speech_rate", 0) for p in prosody_values) / len(prosody_values),
+                "pause_ratio": sum(p.get("pause_ratio", 0) for p in prosody_values) / len(prosody_values),
+            }
+        
+        emotion_counts = {}
+        for e in emotion_values:
+            if e and "dominant_emotion" in e:
+                dom = e["dominant_emotion"]
+                emotion_counts[dom] = emotion_counts.get(dom, 0) + 1
+        
+        dominant_emotion = max(emotion_counts, key=emotion_counts.get) if emotion_counts else "neutral"
+        
+        emotion_summary = {
+            "dominant_emotion": dominant_emotion,
+            "emotion_counts": emotion_counts,
+        }
+        
+        total_duration = sum(s.end_time - s.start_time for s in segments)
+        
+        speaker_summaries.append({
+            "speaker_id": speaker.id,
+            "speaker_label": speaker.label,
+            "speaker_color": speaker.color,
+            "segment_count": len(segments),
+            "total_duration": total_duration,
+            "prosody": prosody_summary,
+            "emotion": emotion_summary,
+        })
+    
+    speaker_summaries.sort(key=lambda x: x["total_duration"], reverse=True)
+    
+    return {
+        "speaker_summaries": speaker_summaries,
+    }
 
 
 def _unlock_deep_analysis_stages(db: Session, interview_id: str):

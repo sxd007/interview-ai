@@ -1,183 +1,146 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { voicePrintApi, VoicePrintProfile } from '../services/api'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import {
+  Card,
+  Button,
+  Modal,
+  Form,
+  Input,
+  message,
+  Empty,
+  Tag,
+  Popconfirm,
+  Row,
+  Col,
+} from 'antd'
+import { PlusOutlined, UserOutlined } from '@ant-design/icons'
+import { voicePrintApi } from '../services/api'
 
 export function VoicePrintListPage() {
-  const [profiles, setProfiles] = useState<VoicePrintProfile[]>([])
-  const [loading, setLoading] = useState(true)
+  const queryClient = useQueryClient()
   const [showModal, setShowModal] = useState(false)
-  const [newName, setNewName] = useState('')
-  const [newDesc, setNewDesc] = useState('')
-  const [creating, setCreating] = useState(false)
+  const [form] = Form.useForm()
 
-  useEffect(() => {
-    loadProfiles()
-  }, [])
+  const { data: profiles, isLoading } = useQuery({
+    queryKey: ['voicePrintProfiles'],
+    queryFn: () => voicePrintApi.listProfiles({ limit: 100 }),
+  })
 
-  const loadProfiles = async () => {
-    try {
-      const res = await voicePrintApi.listProfiles({ limit: 100 })
-      setProfiles(res.data)
-    } catch (err) {
-      console.error('Failed to load profiles:', err)
-    } finally {
-      setLoading(false)
+  const createMutation = useMutation({
+    mutationFn: (data: { name: string; description?: string }) =>
+      voicePrintApi.createProfile(data),
+    onSuccess: () => {
+      message.success('创建成功')
+      setShowModal(false)
+      form.resetFields()
+      queryClient.invalidateQueries({ queryKey: ['voicePrintProfiles'] })
+    },
+    onError: () => {
+      message.error('创建失败')
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => voicePrintApi.deleteProfile(id),
+    onSuccess: () => {
+      message.success('删除成功')
+      queryClient.invalidateQueries({ queryKey: ['voicePrintProfiles'] })
+    },
+    onError: () => {
+      message.error('删除失败')
+    },
+  })
+
+  const getStatusTag = (status: string) => {
+    const config: Record<string, { color: string; text: string }> = {
+      pending: { color: 'warning', text: '待训练' },
+      ready: { color: 'success', text: '已就绪' },
+      trained: { color: 'processing', text: '已优化' },
     }
+    const c = config[status] || { color: 'default', text: status }
+    return <Tag color={c.color}>{c.text}</Tag>
   }
 
   const handleCreate = async () => {
-    if (!newName.trim()) return
-    setCreating(true)
     try {
-      await voicePrintApi.createProfile({ name: newName, description: newDesc })
-      setShowModal(false)
-      setNewName('')
-      setNewDesc('')
-      loadProfiles()
-    } catch (err) {
-      console.error('Failed to create profile:', err)
-    } finally {
-      setCreating(false)
-    }
-  }
-
-  const handleDelete = async (id: string) => {
-    if (!confirm('确定删除此声纹档案？')) return
-    try {
-      await voicePrintApi.deleteProfile(id)
-      loadProfiles()
-    } catch (err) {
-      console.error('Failed to delete profile:', err)
-    }
-  }
-
-  const getStatusBadge = (status: string) => {
-    const colors: Record<string, string> = {
-      pending: 'bg-yellow-100 text-yellow-800',
-      ready: 'bg-green-100 text-green-800',
-      trained: 'bg-blue-100 text-blue-800',
-    }
-    const labels: Record<string, string> = {
-      pending: '待训练',
-      ready: '已就绪',
-      trained: '已优化',
-    }
-    return (
-      <span className={`px-2 py-1 rounded text-xs ${colors[status] || 'bg-gray-100'}`}>
-        {labels[status] || status}
-      </span>
-    )
-  }
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-gray-500">加载中...</div>
-      </div>
-    )
+      const values = await form.validateFields()
+      createMutation.mutate(values)
+    } catch {}
   }
 
   return (
-    <div className="p-6">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold">声纹库管理</h1>
-        <button
-          onClick={() => setShowModal(true)}
-          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-        >
+    <div>
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
+        <h2>声纹库管理</h2>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => setShowModal(true)}>
           新建人员
-        </button>
+        </Button>
       </div>
 
-      {profiles.length === 0 ? (
-        <div className="text-center py-12 text-gray-500">
-          暂无声纹档案，请创建第一个人员
-        </div>
+      {isLoading ? (
+        <div style={{ textAlign: 'center', padding: 48 }}>加载中...</div>
+      ) : !profiles?.data?.length ? (
+        <Empty description="暂无声纹档案，请创建第一个人员" />
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {profiles.map((profile) => (
-            <div
-              key={profile.id}
-              className="border rounded-lg p-4 hover:shadow-md transition-shadow"
-            >
-              <div className="flex justify-between items-start mb-2">
-                <Link
-                  to={`/voice-prints/${profile.id}`}
-                  className="text-lg font-semibold text-blue-600 hover:underline"
-                >
-                  {profile.name}
-                </Link>
-                {getStatusBadge(profile.status)}
-              </div>
-              {profile.description && (
-                <p className="text-gray-600 text-sm mb-3 line-clamp-2">
-                  {profile.description}
-                </p>
-              )}
-              <div className="text-sm text-gray-500 mb-3">
-                样本数: {profile.sample_count}
-              </div>
-              <div className="flex gap-2">
-                <Link
-                  to={`/voice-prints/${profile.id}`}
-                  className="text-sm text-blue-600 hover:underline"
-                >
-                  查看详情
-                </Link>
-                <button
-                  onClick={() => handleDelete(profile.id)}
-                  className="text-sm text-red-600 hover:underline"
-                >
-                  删除
-                </button>
-              </div>
-            </div>
+        <Row gutter={16}>
+          {profiles.data.map((profile) => (
+            <Col key={profile.id} xs={24} sm={12} md={8} lg={6}>
+              <Card
+                hoverable
+                actions={[
+                  <Link key="detail" to={`/voice-prints/${profile.id}`}>
+                    查看详情
+                  </Link>,
+                  <Popconfirm
+                    key="delete"
+                    title="确定删除此声纹档案？"
+                    onConfirm={() => deleteMutation.mutate(profile.id)}
+                  >
+                    <a style={{ color: '#ff4d4f' }}>删除</a>
+                  </Popconfirm>,
+                ]}
+              >
+                <Card.Meta
+                  avatar={<UserOutlined style={{ fontSize: 32, color: '#1890ff' }} />}
+                  title={
+                    <Link to={`/voice-prints/${profile.id}`}>{profile.name}</Link>
+                  }
+                  description={
+                    <div>
+                      {profile.description && (
+                        <div style={{ marginBottom: 8 }}>{profile.description}</div>
+                      )}
+                      <div>样本数: {profile.sample_count}</div>
+                      {getStatusTag(profile.status)}
+                    </div>
+                  }
+                />
+              </Card>
+            </Col>
           ))}
-        </div>
+        </Row>
       )}
 
-      {showModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-96">
-            <h2 className="text-xl font-bold mb-4">新建声纹档案</h2>
-            <div className="mb-4">
-              <label className="block text-sm font-medium mb-1">姓名</label>
-              <input
-                type="text"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                className="w-full border rounded px-3 py-2"
-                placeholder="请输入姓名"
-              />
-            </div>
-            <div className="mb-4">
-              <label className="block text-sm font-medium mb-1">描述</label>
-              <textarea
-                value={newDesc}
-                onChange={(e) => setNewDesc(e.target.value)}
-                className="w-full border rounded px-3 py-2"
-                rows={3}
-                placeholder="可选描述"
-              />
-            </div>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setShowModal(false)}
-                className="px-4 py-2 border rounded hover:bg-gray-50"
-              >
-                取消
-              </button>
-              <button
-                onClick={handleCreate}
-                disabled={creating || !newName.trim()}
-                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-              >
-                {creating ? '创建中...' : '创建'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <Modal
+        title="新建声纹档案"
+        open={showModal}
+        onCancel={() => {
+          setShowModal(false)
+          form.resetFields()
+        }}
+        onOk={handleCreate}
+        confirmLoading={createMutation.isPending}
+      >
+        <Form form={form} layout="vertical">
+          <Form.Item name="name" label="姓名" rules={[{ required: true, message: '请输入姓名' }]}>
+            <Input placeholder="请输入姓名" />
+          </Form.Item>
+          <Form.Item name="description" label="描述">
+            <Input.TextArea rows={3} placeholder="可选描述" />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   )
 }

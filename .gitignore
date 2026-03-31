@@ -40,6 +40,7 @@ data/
 
 # Models (download separately)
 models/
+!src/models/
 
 # Logs
 *.log

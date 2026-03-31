@@ -31,6 +31,7 @@ class Settings(BaseSettings):
 
     upload_dir: Path = Path("./data/uploads")
     output_dir: Path = Path("./data/outputs")
+    voice_print_dir: Path = Path("./data/voice_prints")
     max_upload_size: int = 2 * 1024 * 1024 * 1024  # 2GB
 
     model_cache_dir: Path = Path("./models")
@@ -64,7 +65,7 @@ class Settings(BaseSettings):
         return self.environment == "production"
 
     def ensure_directories(self) -> None:
-        for directory in [self.upload_dir, self.output_dir, self.model_cache_dir]:
+        for directory in [self.upload_dir, self.output_dir, self.model_cache_dir, self.voice_print_dir]:
             directory.mkdir(parents=True, exist_ok=True)
 
     def get_device(self) -> str:

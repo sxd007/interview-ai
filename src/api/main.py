@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from src.core import settings
 from src.models import init_db
 from src.api.routes import interviews_router, process_router, pipeline_router, corrections_router
+from src.services.voice_print.api import router as voice_print_router
 from src.utils.logging import setup_logging
 
 setup_logging(level=settings.log_level)
@@ -49,6 +50,7 @@ app.include_router(interviews_router, prefix="/api")
 app.include_router(process_router, prefix="/api")
 app.include_router(pipeline_router, prefix="/api")
 app.include_router(corrections_router, prefix="/api")
+app.include_router(voice_print_router, prefix="/api")
 
 
 @app.get("/")

@@ -281,6 +281,51 @@ class AnnotationLog(Base):
     interview: Mapped["Interview"] = relationship(back_populates="annotation_logs")
 
 
+class VoicePrintProfile(Base):
+    __tablename__ = "voice_print_profiles"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    embedding: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    sample_count: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    samples: Mapped[List["VoicePrintSample"]] = relationship(back_populates="profile", cascade="all, delete-orphan")
+    matches: Mapped[List["VoicePrintMatch"]] = relationship(back_populates="profile", cascade="all, delete-orphan")
+
+
+class VoicePrintSample(Base):
+    __tablename__ = "voice_print_samples"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    profile_id: Mapped[str] = mapped_column(String(36), ForeignKey("voice_print_profiles.id"), nullable=False)
+    audio_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    duration: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    embedding: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    profile: Mapped["VoicePrintProfile"] = relationship(back_populates="samples")
+
+
+class VoicePrintMatch(Base):
+    __tablename__ = "voice_print_matches"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    profile_id: Mapped[str] = mapped_column(String(36), ForeignKey("voice_print_profiles.id"), nullable=False)
+    interview_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("interviews.id"), nullable=True)
+    speaker_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    speaker_label: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    matched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    profile: Mapped["VoicePrintProfile"] = relationship(back_populates="matches")
+
+
 _engine = None
 _session_local = None
 

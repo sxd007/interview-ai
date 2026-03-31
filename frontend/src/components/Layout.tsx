@@ -1,6 +1,6 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
 import { Layout as AntLayout, Menu } from 'antd'
-import { HomeOutlined, VideoCameraOutlined, UploadOutlined } from '@ant-design/icons'
+import { HomeOutlined, VideoCameraOutlined, UploadOutlined, UserOutlined } from '@ant-design/icons'
 
 const { Header, Content } = AntLayout
 
@@ -11,6 +11,7 @@ export function Layout() {
     { key: '/', icon: <HomeOutlined />, label: <Link to="/">首页</Link> },
     { key: '/interviews', icon: <VideoCameraOutlined />, label: <Link to="/interviews">访谈列表</Link> },
     { key: '/upload', icon: <UploadOutlined />, label: <Link to="/upload">上传视频</Link> },
+    { key: '/voice-prints', icon: <UserOutlined />, label: <Link to="/voice-prints">声纹库</Link> },
   ]
 
   return (

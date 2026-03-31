@@ -179,10 +179,6 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
   
   const tickFormatter = (val: number) => formatTime(val)
 
-  const visibleSpeakers = showAllSpeakers
-    ? speakers
-    : speakers.filter(s => s.id === selectedSpeakerId)
-
   const speakerDataMap = useMemo(() => {
     return speakers.map((speaker, idx) => {
       // 只为未被隐藏的说话人计算 baseline
@@ -524,10 +520,11 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
                   const xMin = Math.min(...chartData.map(d => d.time))
                   const xMax = Math.max(...chartData.map(d => d.time))
                   const isHidden = legendHidden[spk.speakerId]
+                  if (isHidden) return null
                   return (
                     <>
-                      <ReferenceLine y={bl.lower} stroke={spk.color} strokeDasharray="3 3" hide={isHidden} />
-                      <ReferenceLine y={bl.upper} stroke={spk.color} strokeDasharray="3 3" hide={isHidden} />
+                      <ReferenceLine y={bl.lower} stroke={spk.color} strokeDasharray="3 3" />
+                      <ReferenceLine y={bl.upper} stroke={spk.color} strokeDasharray="3 3" />
                       <ReferenceArea
                         key={`${spk.speakerId}-baseline`}
                         x1={xMin}
@@ -538,7 +535,6 @@ export function SpeakerProsodyPanel({ segments, speakers }: Props) {
                         strokeOpacity={0.3}
                         fill={spk.color}
                         fillOpacity={0.15}
-                        hide={isHidden}
                       />
                     </>
                   )

@@ -298,4 +298,76 @@ export const pipelineApi = {
     ),
 }
 
+export interface VoicePrintProfile {
+  id: string
+  name: string
+  description?: string
+  embedding?: number[]
+  sample_count: number
+  status: 'pending' | 'ready' | 'trained'
+  created_at: string
+  updated_at: string
+}
+
+export interface VoicePrintSample {
+  id: string
+  profile_id: string
+  audio_path: string
+  duration?: number
+  embedding?: number[]
+  status: 'pending' | 'completed' | 'failed' | 'skipped'
+  error_message?: string
+  created_at: string
+}
+
+export interface VoicePrintMatch {
+  id: string
+  profile_id: string
+  interview_id?: string
+  speaker_id?: string
+  speaker_label?: string
+  confidence: number
+  matched_at: string
+}
+
+export const voicePrintApi = {
+  createProfile: (data: { name: string; description?: string }) =>
+    api.post<VoicePrintProfile>('/voice-prints', data),
+
+  listProfiles: (params?: { skip?: number; limit?: number }) =>
+    api.get<VoicePrintProfile[]>('/voice-prints', { params }),
+
+  getProfile: (id: string) =>
+    api.get<VoicePrintProfile>(`/voice-prints/${id}`),
+
+  updateProfile: (id: string, data: { name?: string; description?: string }) =>
+    api.patch<VoicePrintProfile>(`/voice-prints/${id}`, data),
+
+  deleteProfile: (id: string) =>
+    api.delete(`/voice-prints/${id}`),
+
+  addSample: async (profileId: string, file: File) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return api.post<VoicePrintSample>(`/voice-prints/${profileId}/samples`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
+
+  listSamples: (profileId: string) =>
+    api.get<VoicePrintSample[]>(`/voice-prints/${profileId}/samples`),
+
+  deleteSample: (sampleId: string) =>
+    api.delete(`/voice-prints/samples/${sampleId}`),
+
+  getMatches: (profileId: string, limit?: number) =>
+    api.get<VoicePrintMatch[]>(`/voice-prints/${profileId}/matches`, { params: { limit } }),
+
+  matchEmbedding: (embedding: number[], threshold: number = 0.7) =>
+    api.post<{ profile_id: string | null; profile_name: string | null; confidence: number }>(
+      '/voice-prints/match',
+      { embedding: { embedding }, threshold }
+    ),
+}
+
 export default api

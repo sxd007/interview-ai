@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import List, Tuple, Optional, Union
 import numpy as np
 
 
@@ -35,7 +35,7 @@ def find_best_match(
     target_embedding: np.ndarray,
     candidate_embeddings: List[Tuple[str, np.ndarray]],
     threshold: float = 0.7,
-) -> Tuple[str, float] | None:
+) -> Optional[Tuple[str, float]]:
     best_score = threshold
     best_id = None
 

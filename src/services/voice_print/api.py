@@ -2,10 +2,11 @@ import uuid
 import os
 from pathlib import Path
 from typing import List, Optional
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from src.models import get_db
 from src.models.database import VoicePrintProfile, VoicePrintSample, VoicePrintMatch
@@ -36,6 +37,13 @@ class ProfileResponse(BaseModel):
     created_at: str
     updated_at: str
 
+    @field_validator('created_at', 'updated_at', mode='before')
+    @classmethod
+    def parse_datetime(cls, v):
+        if isinstance(v, datetime):
+            return v.isoformat()
+        return v
+
     class Config:
         from_attributes = True
 
@@ -50,6 +58,13 @@ class SampleResponse(BaseModel):
     error_message: Optional[str]
     created_at: str
 
+    @field_validator('created_at', mode='before')
+    @classmethod
+    def parse_datetime(cls, v):
+        if isinstance(v, datetime):
+            return v.isoformat()
+        return v
+
     class Config:
         from_attributes = True
 
@@ -62,6 +77,13 @@ class MatchResponse(BaseModel):
     speaker_label: Optional[str]
     confidence: float
     matched_at: str
+
+    @field_validator('matched_at', mode='before')
+    @classmethod
+    def parse_datetime(cls, v):
+        if isinstance(v, datetime):
+            return v.isoformat()
+        return v
 
     class Config:
         from_attributes = True

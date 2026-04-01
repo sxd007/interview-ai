@@ -28,6 +28,7 @@ env/
 # IDE
 .idea/
 .vscode/
+.trae/
 *.swp
 *.swo
 *~
@@ -70,3 +71,7 @@ frontend/out/
 
 # OpenCode (local config)
 .opencode/
+
+
+# backup files
+*.bak

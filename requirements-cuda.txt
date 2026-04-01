@@ -1,0 +1,7 @@
+# CUDA dependencies for Linux with NVIDIA GPU (RTX 4090)
+# Requires: CUDA 12.1+
+# Install: pip install -r requirements-base.txt && pip install -r requirements-cuda.txt
+
+--index-url https://download.pytorch.org/whl/cu121
+torch==2.5.1+cu121
+torchaudio==2.5.1+cu121

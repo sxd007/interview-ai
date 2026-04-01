@@ -1,7 +1,87 @@
 # 跨平台开发分析
 
-> **更新时间**: 2026-03-21
+> **更新时间**: 2026-04-01
 > **分析目的**: 评估当前项目从 macOS 迁移到 Linux + NVIDIA GPU 的兼容性
+> **实施状态**: ✅ 已完成
+
+---
+
+## 实施状态总览
+
+| 阶段 | 状态 | 完成时间 |
+|------|:----:|---------|
+| 阶段 1: 依赖管理重构 | ✅ | 2026-04-01 |
+| 阶段 2: 字体管理模块 | ✅ | 2026-04-01 |
+| 阶段 3: 系统依赖检测 | ✅ | 2026-04-01 |
+| 阶段 4: 设备管理优化 | ✅ | 2026-04-01 |
+| 阶段 5: Docker 配置更新 | ✅ | 2026-04-01 |
+| 阶段 6: 测试和验证 | ⏳ | 待进行 |
+
+---
+
+## 新增文件清单
+
+### 依赖管理
+- ✅ `requirements-base.txt` - 基础依赖（不含 PyTorch）
+- ✅ `requirements-cuda.txt` - CUDA 版本 PyTorch
+- ✅ `requirements-mps.txt` - MPS 版本 PyTorch
+- ✅ `requirements-cpu.txt` - CPU 版本 PyTorch（已更新）
+- ✅ `scripts/install_deps.py` - 自动安装脚本
+
+### 工具模块
+- ✅ `src/utils/fonts.py` - 跨平台字体管理
+- ✅ `src/utils/system_check.py` - 系统依赖检测
+- ✅ `src/utils/gpu.py` - GPU 设备管理
+
+### Docker 配置
+- ✅ `docker/Dockerfile.gpu` - GPU 版本（已更新）
+- ✅ `docker/Dockerfile.cpu` - CPU 版本（已更新）
+
+---
+
+## 快速开始
+
+### 自动安装（推荐）
+```bash
+# 自动检测平台并安装依赖
+python scripts/install_deps.py
+
+# 查看帮助
+python scripts/install_deps.py --help
+
+# 手动指定平台
+python scripts/install_deps.py --platform cuda  # Linux + NVIDIA GPU
+python scripts/install_deps.py --platform mps   # macOS Apple Silicon
+python scripts/install_deps.py --platform cpu   # CPU only
+```
+
+### 手动安装
+```bash
+# 1. 安装基础依赖
+pip install -r requirements-base.txt
+
+# 2. 根据平台安装 PyTorch
+# macOS:
+pip install -r requirements-mps.txt
+# Linux + NVIDIA GPU:
+pip install -r requirements-cuda.txt
+# CPU only:
+pip install -r requirements-cpu.txt
+```
+
+### 系统依赖
+```bash
+# ffmpeg (必需)
+# macOS:
+brew install ffmpeg
+# Ubuntu:
+sudo apt install ffmpeg
+
+# 中文字体 (PDF 生成需要)
+# macOS: 系统已内置
+# Ubuntu:
+sudo apt install fonts-noto-cjk
+```
 
 ---
 

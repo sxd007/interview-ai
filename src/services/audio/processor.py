@@ -8,10 +8,21 @@ import numpy as np
 import soundfile as sf
 import torch
 
+from src.utils.system_check import SystemChecker
+
 
 class AudioProcessor:
     def __init__(self, device: Optional[str] = None):
         self.device = self._get_device(device)
+        self._check_ffmpeg()
+    
+    def _check_ffmpeg(self) -> None:
+        """Check if ffmpeg is available."""
+        available, message = SystemChecker.check_ffmpeg()
+        if not available:
+            raise RuntimeError(
+                f"ffmpeg is required for audio processing.\n{message}"
+            )
 
     def _get_device(self, device: Optional[str]) -> str:
         if device:

@@ -70,17 +70,8 @@ class Settings(BaseSettings):
 
     def get_device(self) -> str:
         """Get the actual device to use based on config and availability."""
-        import torch
-
-        if self.device != "auto":
-            return self.device
-        
-        # Auto-detect
-        if torch.cuda.is_available():
-            return "cuda:0"
-        elif torch.backends.mps.is_available():
-            return "mps"
-        return "cpu"
+        from src.utils.gpu import get_device as get_gpu_device
+        return get_gpu_device(self.device)
 
     @property
     def is_gpu_available(self) -> bool:

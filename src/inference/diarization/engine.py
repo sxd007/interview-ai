@@ -5,6 +5,16 @@ import numpy as np
 
 import torch
 
+import huggingface_hub
+_original_hf_hub_download = huggingface_hub.hf_hub_download
+
+def _patched_hf_hub_download(*args, **kwargs):
+    if 'use_auth_token' in kwargs:
+        kwargs['token'] = kwargs.pop('use_auth_token')
+    return _original_hf_hub_download(*args, **kwargs)
+
+huggingface_hub.hf_hub_download = _patched_hf_hub_download
+
 from pyannote.audio import Pipeline
 
 
@@ -37,9 +47,12 @@ class DiarizationEngine:
                 if self.cache_dir:
                     import huggingface_hub
                     huggingface_hub.constants.HF_HOME = self.cache_dir
+                
+                if self.auth_token:
+                    os.environ["HF_TOKEN"] = self.auth_token
+                
                 self.pipeline = Pipeline.from_pretrained(
                     self.model_name,
-                    use_auth_token=self.auth_token,
                 )
             except Exception as e:
                 if "401" in str(e) or "Unauthorized" in str(e) or "authentication" in str(e).lower():

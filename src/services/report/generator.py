@@ -14,9 +14,7 @@ from reportlab.platypus import (
 )
 from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
 
-
-pdfmetrics.registerFont(TTFont("STHeiti", "/System/Library/Fonts/STHeiti Light.ttc"))
-pdfmetrics.registerFont(TTFont("ArialUnicode", "/Library/Fonts/Arial Unicode.ttf"))
+from src.utils.fonts import FontManager
 
 
 EMOTION_COLORS = {
@@ -55,14 +53,24 @@ class ReportGenerator:
     def __init__(self):
         self.page_width, self.page_height = A4
         self.margin = 20 * mm
+        self._register_fonts()
         self._setup_styles()
+    
+    def _register_fonts(self):
+        font_results = FontManager.register_fonts()
+        if not font_results.get("cn_font"):
+            import logging
+            logging.warning(
+                "Chinese font not available. PDF generation may fail. "
+                f"Install guide:\n{FontManager.get_installation_guide()}"
+            )
 
     def _setup_styles(self):
         self.styles = getSampleStyleSheet()
 
         self.title_style = ParagraphStyle(
             "TitleCN",
-            fontName="STHeiti",
+            fontName="CN",
             fontSize=24,
             leading=32,
             alignment=TA_CENTER,

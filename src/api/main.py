@@ -10,6 +10,7 @@ from src.models import init_db
 from src.api.routes import interviews_router, process_router, pipeline_router, corrections_router
 from src.services.voice_print.api import router as voice_print_router
 from src.utils.logging import setup_logging
+from src.utils.system_check import SystemChecker
 
 setup_logging(level=settings.log_level)
 logger = setup_logging(level=settings.log_level)
@@ -18,6 +19,29 @@ logger = setup_logging(level=settings.log_level)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting Interview AI API...")
+    
+    system_check = SystemChecker.full_check()
+    logger.info(f"Platform: {system_check['platform']}")
+    logger.info(f"Python: {system_check['python']['version']}")
+    
+    if not system_check['ffmpeg']['available']:
+        logger.warning(f"ffmpeg: {system_check['ffmpeg']['message']}")
+    else:
+        logger.info("ffmpeg: available")
+    
+    gpu = system_check['gpu']
+    if gpu['cuda_available']:
+        logger.info(f"GPU: CUDA {gpu['cuda_version']} - {gpu['gpu_name']}")
+    elif gpu['mps_available']:
+        logger.info("GPU: MPS (Apple Silicon)")
+    else:
+        logger.info("GPU: CPU mode")
+    
+    fonts = system_check['fonts']
+    if not fonts.get('cn_font'):
+        logger.warning("Chinese font not available. PDF generation may fail.")
+        logger.warning("Install with: sudo apt install fonts-noto-cjk (Ubuntu)")
+    
     settings.ensure_directories()
     init_db()
     logger.info("Database initialized")

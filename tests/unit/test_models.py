@@ -72,7 +72,7 @@ def test_face_frame_storage(db_session, interview_data):
         interview_id=interview.id,
         timestamp=1.5,
         face_bbox=[100, 100, 200, 200],
-        landmarks=[[x, y, z] for x in range(468)],
+        landmarks=[[0.0, 0.0, 0.0] for _ in range(468)],
         action_units={"AU01": 0.5, "AU12": 0.8},
     )
     db_session.add(face_frame)

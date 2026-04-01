@@ -510,11 +510,26 @@ def start_chunk_queue(
 ):
     """Background task: process chunks one by one in order."""
     import traceback
+    import sys
+    import threading
+    
+    print(f"[QUEUE] === THREAD STARTED === interview_id={interview_id}", flush=True)
+    print(f"[QUEUE] Python version: {sys.version}", flush=True)
+    print(f"[QUEUE] Current thread: {threading.current_thread().name}", flush=True)
+    
     logger.info(f"[QUEUE] start_chunk_queue STARTED for {interview_id}")
     logger.info(f"[QUEUE] config: chunk_enabled={config.chunk_enabled}, speaker_diarization={config.speaker_diarization}, audio_denoise={config.audio_denoise}")
-    db_gen = get_db()
-    db = next(db_gen)
-    logger.info(f"[QUEUE] db session obtained")
+    
+    try:
+        print("[QUEUE] Getting database session...", flush=True)
+        db_gen = get_db()
+        db = next(db_gen)
+        print("[QUEUE] Database session obtained", flush=True)
+        logger.info(f"[QUEUE] db session obtained")
+    except Exception as e:
+        print(f"[QUEUE] ERROR getting db session: {e}", flush=True)
+        logger.error(f"[QUEUE] ERROR getting db session: {e}")
+        return
     try:
         chunks = db.query(VideoChunk).filter(
             VideoChunk.interview_id == interview_id
@@ -655,10 +670,19 @@ async def start_processing(
 
         single_path = os.path.join(chunk_dir, "chunk_000.mp4")
         if not os.path.exists(single_path):
-            subprocess.run([
-                "ffmpeg", "-v", "error", "-y",
-                "-i", interview.file_path, "-c", "copy", single_path,
-            ], check=True)
+            logger.info(f"Transcoding video to H.264: {single_path}")
+            result = subprocess.run([
+                "ffmpeg", "-v", "warning", "-y",
+                "-i", interview.file_path,
+                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                "-c:a", "aac", "-b:a", "128k",
+                "-movflags", "+faststart",
+                single_path,
+            ], capture_output=True, text=True)
+            if result.returncode != 0:
+                logger.error(f"Transcode failed: {result.stderr}")
+                raise RuntimeError(f"Video transcoding failed: {result.stderr}")
+            logger.info(f"Transcoding complete: {single_path}")
 
         interview.is_chunked = False
         interview.chunk_duration = None

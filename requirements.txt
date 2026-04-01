@@ -1,3 +1,29 @@
+# Interview AI - Dependencies
+#
+# IMPORTANT: This project requires platform-specific PyTorch installation.
+# Please use the automatic installer script:
+#
+#     python scripts/install_deps.py
+#
+# Or manually install based on your platform:
+#
+# 1. macOS (Apple Silicon):
+#    pip install -r requirements-base.txt
+#    pip install -r requirements-mps.txt
+#
+# 2. Linux with NVIDIA GPU (RTX 4090):
+#    pip install -r requirements-base.txt
+#    pip install -r requirements-cuda.txt
+#
+# 3. Linux without GPU / Windows:
+#    pip install -r requirements-base.txt
+#    pip install -r requirements-cpu.txt
+#
+# For detailed instructions, see: docs/spec.md
+
+# The following is a reference list of all dependencies.
+# DO NOT install directly from this file - use the platform-specific files above.
+
 # Core
 fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
@@ -13,9 +39,7 @@ python-multipart>=0.0.6
 python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4
 
-# ML/AI
-torch==2.5.1+cu121
-torchaudio==2.5.1+cu121
+# ML/AI (PyTorch must be installed separately - see above)
 numpy>=1.26.0
 transformers>=4.36.0
 accelerate>=0.25.0
@@ -36,6 +60,9 @@ scenedetect>=0.6.2
 
 # Image
 pillow>=10.1.0
+
+# PDF Generation
+reportlab>=4.0.0
 
 # Utils
 tqdm>=4.66.1

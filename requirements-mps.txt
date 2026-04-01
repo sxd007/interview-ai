@@ -1,0 +1,5 @@
+# MPS dependencies for macOS Apple Silicon
+# Install: pip install -r requirements-base.txt && pip install -r requirements-mps.txt
+
+torch==2.5.1
+torchaudio==2.5.1

@@ -1,4 +1,4 @@
-# GPU Version - For Linux with NVIDIA GPU
+# GPU Version - For Linux with NVIDIA GPU (RTX 4090)
 # Requires: NVIDIA GPU + CUDA 12.1+
 FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04 AS base
 
@@ -15,20 +15,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsm6 \
     libxext6 \
     libgl1-mesa-glx \
+    fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
-# Set Python 3.10 as default
 RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1
 
-# Install GPU PyTorch
-RUN pip install --no-cache-dir torch==2.1.0 --index-url https://download.pytorch.org/whl/cu121
-
-# Install dependencies
-COPY pyproject.toml requirements.txt* ./
-RUN pip install --no-cache-dir poetry && \
-    poetry config virtualenvs.create false && \
-    poetry install --no-interaction --no-ansi --no-root || \
-    (pip install --no-cache-dir -r requirements.txt || true)
+COPY requirements-base.txt requirements-cuda.txt ./
+RUN pip install --no-cache-dir -r requirements-base.txt && \
+    pip install --no-cache-dir -r requirements-cuda.txt
 
 COPY src/ ./src/
 COPY scripts/ ./scripts/

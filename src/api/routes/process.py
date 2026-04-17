@@ -470,8 +470,8 @@ def split_video_chunks(video_path: str, chunk_duration: float, output_dir: str, 
     idx = 0
     step = chunk_duration
     
-    encoder, encoder_params = get_optimal_encoder()
-    logger.info(f"[split_video_chunks] Using encoder: {encoder}")
+    encoder, encoder_params = get_optimal_encoder(force_cpu=True)
+    logger.info(f"[split_video_chunks] Using encoder: {encoder}, preset: {encoder_params.get('preset', 'default')}")
     
     while start < total:
         end = min(start + chunk_duration, total)
@@ -487,7 +487,7 @@ def split_video_chunks(video_path: str, chunk_duration: float, output_dir: str, 
         if encoder == "h264_nvenc":
             cmd.extend([
                 "-c:v", encoder,
-                "-preset", encoder_params.get("preset", "p4"),
+                "-preset", encoder_params.get("preset", "hq"),
                 "-cq", encoder_params.get("cq", "23"),
             ])
         elif encoder == "h264_videotoolbox":
@@ -508,7 +508,16 @@ def split_video_chunks(video_path: str, chunk_duration: float, output_dir: str, 
             chunk_path,
         ])
         
-        subprocess.run(cmd, check=True, capture_output=True)
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            logger.error(f"Chunk {idx} split failed: {result.stderr}")
+            if os.path.exists(chunk_path):
+                os.remove(chunk_path)
+            raise RuntimeError(f"Failed to split video chunk {idx}: {result.stderr}")
+        
+        if not os.path.exists(chunk_path) or os.path.getsize(chunk_path) == 0:
+            raise RuntimeError(f"Chunk {idx} output file is empty or missing")
+        
         chunks.append((chunk_path, start, end))
         start += step
         idx += 1
@@ -1044,7 +1053,7 @@ async def start_processing(
             success, message = transcode_video(
                 interview.file_path,
                 single_path,
-                use_gpu=True
+                use_gpu=False
             )
             
             if not success:

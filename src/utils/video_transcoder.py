@@ -4,11 +4,51 @@
 支持 GPU 加速的视频转码功能
 """
 
+import os
 import subprocess
 import logging
 from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+def check_nvenc_preset_support() -> str:
+    """检查 NVENC 支持的 preset 类型，返回推荐的 preset 值"""
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-h", "encoder=h264_nvenc"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        output = result.stdout
+        
+        lines = output.split('\n')
+        preset_section = False
+        supported_presets = []
+        
+        for line in lines:
+            if '-preset' in line:
+                preset_section = True
+                continue
+            if preset_section and line.strip().startswith('-'):
+                break
+            if preset_section and line.strip():
+                preset_name = line.strip().split()[0]
+                if preset_name.isalpha() or preset_name.startswith('p'):
+                    supported_presets.append(preset_name)
+        
+        if 'p4' in supported_presets or 'p1' in supported_presets:
+            return "p4"
+        elif 'hq' in supported_presets:
+            return "hq"
+        elif 'medium' in supported_presets:
+            return "medium"
+        else:
+            return "default"
+    except Exception as e:
+        logger.warning(f"Failed to check NVENC preset support: {e}")
+        return "default"
 
 
 def check_nvenc_support() -> bool:
@@ -44,17 +84,28 @@ def check_videotoolbox_support() -> bool:
         return False
 
 
-def get_optimal_encoder() -> Tuple[str, dict]:
+def get_optimal_encoder(force_cpu: bool = False) -> Tuple[str, dict]:
     """
     获取最优的视频编码器
+    
+    Args:
+        force_cpu: 强制使用 CPU 编码（默认 True 以确保稳定性）
     
     Returns:
         (encoder_name, encoder_params): 编码器名称和参数
     """
+    if force_cpu:
+        logger.info("使用 CPU 软件编码 (libx264) - 稳定模式")
+        return "libx264", {
+            "preset": "fast",
+            "crf": "23",
+        }
+    
     if check_nvenc_support():
-        logger.info("✓ 使用 NVIDIA NVENC 硬件加速编码")
+        preset = check_nvenc_preset_support()
+        logger.info(f"✓ 使用 NVIDIA NVENC 硬件加速编码 (preset: {preset})")
         return "h264_nvenc", {
-            "preset": "p4",
+            "preset": preset,
             "cq": "23",
         }
     
@@ -74,7 +125,7 @@ def get_optimal_encoder() -> Tuple[str, dict]:
 def transcode_video(
     input_path: str,
     output_path: str,
-    use_gpu: bool = True,
+    use_gpu: bool = False,
     preset: Optional[str] = None,
     crf: Optional[int] = None,
 ) -> Tuple[bool, str]:
@@ -84,14 +135,14 @@ def transcode_video(
     Args:
         input_path: 输入视频路径
         output_path: 输出视频路径
-        use_gpu: 是否使用 GPU 加速（如果可用）
+        use_gpu: 是否使用 GPU 加速（默认 False 以确保稳定性）
         preset: 编码预设（可选）
         crf: 质量参数（可选）
     
     Returns:
         (success, message): 是否成功和消息
     """
-    encoder, encoder_params = get_optimal_encoder() if use_gpu else ("libx264", {"preset": "fast", "crf": "23"})
+    encoder, encoder_params = get_optimal_encoder(force_cpu=not use_gpu)
     
     if preset:
         encoder_params["preset"] = preset
@@ -148,6 +199,14 @@ def transcode_video(
         if result.returncode != 0:
             error_msg = result.stderr or "Unknown error"
             logger.error(f"转码失败: {error_msg}")
+            if os.path.exists(output_path):
+                os.remove(output_path)
+                logger.info(f"已清理失败的输出文件: {output_path}")
+            return False, error_msg
+        
+        if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+            error_msg = "转码输出文件为空或不存在"
+            logger.error(error_msg)
             return False, error_msg
         
         logger.info(f"✓ 转码完成: {output_path}")
@@ -156,10 +215,14 @@ def transcode_video(
     except subprocess.TimeoutExpired:
         error_msg = "转码超时（超过1小时）"
         logger.error(error_msg)
+        if os.path.exists(output_path):
+            os.remove(output_path)
         return False, error_msg
     except Exception as e:
         error_msg = f"转码异常: {str(e)}"
         logger.error(error_msg)
+        if os.path.exists(output_path):
+            os.remove(output_path)
         return False, error_msg
 
 

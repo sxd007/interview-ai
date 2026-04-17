@@ -470,7 +470,7 @@ def split_video_chunks(video_path: str, chunk_duration: float, output_dir: str, 
     idx = 0
     step = chunk_duration
     
-    encoder, encoder_params = get_optimal_encoder(force_cpu=True)
+    encoder, encoder_params = get_optimal_encoder()
     logger.info(f"[split_video_chunks] Using encoder: {encoder}, preset: {encoder_params.get('preset', 'default')}")
     
     while start < total:
@@ -482,31 +482,13 @@ def split_video_chunks(video_path: str, chunk_duration: float, output_dir: str, 
             "ffmpeg", "-v", "error", "-y",
             "-ss", str(start), "-i", video_path,
             "-t", str(end - start),
-        ]
-        
-        if encoder == "h264_nvenc":
-            cmd.extend([
-                "-c:v", encoder,
-                "-preset", encoder_params.get("preset", "hq"),
-                "-cq", encoder_params.get("cq", "23"),
-            ])
-        elif encoder == "h264_videotoolbox":
-            cmd.extend([
-                "-c:v", encoder,
-                "-q:v", encoder_params.get("q:v", "65"),
-            ])
-        else:
-            cmd.extend([
-                "-c:v", encoder,
-                "-preset", encoder_params.get("preset", "fast"),
-                "-crf", encoder_params.get("crf", "23"),
-            ])
-        
-        cmd.extend([
+            "-c:v", "h264_nvenc",
+            "-preset", encoder_params.get("preset", "hq"),
+            "-cq", encoder_params.get("cq", "23"),
             "-c:a", "aac", "-b:a", "128k",
             "-movflags", "+faststart",
             chunk_path,
-        ])
+        ]
         
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
@@ -1053,7 +1035,6 @@ async def start_processing(
             success, message = transcode_video(
                 interview.file_path,
                 single_path,
-                use_gpu=False
             )
             
             if not success:

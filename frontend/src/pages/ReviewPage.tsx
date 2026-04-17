@@ -9,13 +9,13 @@ import {
 import {
   CheckCircleOutlined, EditOutlined,
   MergeOutlined, SaveOutlined, UndoOutlined,
-  CheckOutlined, ExclamationCircleOutlined,
+  CheckOutlined, ExclamationCircleOutlined, ScissorOutlined,
 } from '@ant-design/icons'
-import axios from 'axios'
+import api from '../services/api'
+import { SplitSegmentModal, SplitData } from '../components/SplitSegmentModal'
 
 const { Text } = Typography
 const { TextArea } = Input
-const api = axios.create({ baseURL: '/api', timeout: 600000 })
 
 const formatTime = (s: number) => {
   const m = Math.floor(s / 60)
@@ -87,6 +87,8 @@ export function ReviewPage() {
   const [editValues, setEditValues] = useState<Record<string, any>>({})
   const [applyModalOpen, setApplyModalOpen] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
+  const [splitModalOpen, setSplitModalOpen] = useState(false)
+  const [splittingSegment, setSplittingSegment] = useState<SegmentData | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
 
   const { data: chunksData, isLoading: chunksLoading } = useQuery({
@@ -108,7 +110,8 @@ export function ReviewPage() {
     queryKey: ['pending-changes', interviewId],
     queryFn: () => api.get(`/interviews/${interviewId}/corrections/pending`).then(r => r.data),
     enabled: !!interviewId,
-    refetchInterval: 5000,
+    refetchInterval: 2000,
+    staleTime: 0,
   })
 
   const chunks: ChunkData[] = chunksData?.chunks || []
@@ -180,6 +183,86 @@ export function ReviewPage() {
     },
     onError: (e: any) => message.error(e?.response?.data?.detail || '审核失败'),
   })
+
+  const handleSplitSegment = async (data: SplitData) => {
+    if (!splittingSegment) return
+
+    if (data.multipleSplits && data.multipleSplits.length > 0) {
+      const sortedSplitPoints = [...data.multipleSplits].sort((a, b) => a.position - b.position)
+      
+      let currentSegmentId = splittingSegment.id
+      let currentTranscript = splittingSegment.transcript || ''
+      let currentStartTime = splittingSegment.start_time
+      let currentEndTime = splittingSegment.end_time
+      
+      for (let i = 0; i < sortedSplitPoints.length; i++) {
+        const splitPoint = sortedSplitPoints[i]
+        const ratio = splitPoint.position / currentTranscript.length
+        const splitTime = currentStartTime + (currentEndTime - currentStartTime) * ratio
+        
+        const text1 = currentTranscript.slice(0, splitPoint.position)
+        const text2 = currentTranscript.slice(splitPoint.position)
+        
+        const isLastSplit = i === sortedSplitPoints.length - 1
+        
+        const payload: any = {
+          segment_id: currentSegmentId,
+          split_time: splitTime,
+          speaker_id_1: i === 0 ? data.speakerId1 : sortedSplitPoints[i - 1].speakerId,
+          speaker_id_2: splitPoint.speakerId,
+          text_1: text1,
+          text_2: isLastSplit ? text2 : text2,
+        }
+        
+        try {
+          const response = await api.post(
+            `/interviews/${interviewId}/corrections/split-segment`,
+            payload
+          )
+          
+          if (isLastSplit) {
+            message.success('已添加多次分割变更')
+            queryClient.invalidateQueries({ queryKey: ['pending-changes', interviewId] })
+          } else {
+            const newSegmentId = response.data?.new_segment_id
+            if (newSegmentId) {
+              currentSegmentId = newSegmentId
+              currentTranscript = text2
+              currentStartTime = splitTime
+            }
+          }
+        } catch (error) {
+          message.error('分割失败')
+          break
+        }
+      }
+    } else {
+      const payload: any = {
+        segment_id: splittingSegment.id,
+        speaker_id_1: data.speakerId1,
+        speaker_id_2: data.speakerId2,
+      }
+
+      if (data.splitType === 'text') {
+        payload.split_text_position = data.splitTextPosition
+        if (data.text1) payload.text_1 = data.text1
+        if (data.text2) payload.text_2 = data.text2
+        addChangeMutation.mutate({
+          endpoint: 'split-segment-by-text',
+          body: payload,
+        })
+      } else {
+        payload.split_time = data.splitTime
+        addChangeMutation.mutate({
+          endpoint: 'split-segment',
+          body: payload,
+        })
+      }
+    }
+
+    setSplitModalOpen(false)
+    setSplittingSegment(null)
+  }
 
   const chunkTabItems = chunks.map(chunk => ({
     key: chunk.id,
@@ -266,15 +349,23 @@ export function ReviewPage() {
     {
       title: '',
       key: 'action',
-      width: 60,
+      width: 100,
       render: (_: any, record: SegmentData) => (
-        <Button size="small" icon={<EditOutlined />}
-          onClick={() => {
-            setEditingSegment(record)
-            setEditValues({})
-            setApplyModalOpen(true)
-          }}
-        />
+        <Space size="small">
+          <Button size="small" icon={<EditOutlined />}
+            onClick={() => {
+              setEditingSegment(record)
+              setEditValues({})
+              setApplyModalOpen(true)
+            }}
+          />
+          <Button size="small" icon={<ScissorOutlined />}
+            onClick={() => {
+              setSplittingSegment(record)
+              setSplitModalOpen(true)
+            }}
+          />
+        </Space>
       ),
     },
   ]
@@ -718,6 +809,18 @@ export function ReviewPage() {
           </div>
         )}
       </Modal>
+
+      <SplitSegmentModal
+        open={splitModalOpen}
+        segment={splittingSegment}
+        speakers={speakers}
+        onSplit={handleSplitSegment}
+        onCancel={() => {
+          setSplitModalOpen(false)
+          setSplittingSegment(null)
+        }}
+        loading={addChangeMutation.isPending}
+      />
     </div>
   )
 }

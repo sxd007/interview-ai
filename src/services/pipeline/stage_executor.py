@@ -176,6 +176,12 @@ def get_all_stages(
     db: Session,
     interview_id: str,
 ) -> List[PipelineStage]:
+    '''
+    获取访谈的所有pipeline阶段
+    :param interview_id: 访谈ID
+    :param db: 数据库会话
+    :return: 访谈的所有pipeline阶段，每个阶段包含状态、进度、结果摘要、错误信息
+    '''
     stages = db.query(PipelineStage).filter(
         PipelineStage.interview_id == interview_id,
     ).order_by(PipelineStage.created_at).all()

@@ -32,11 +32,13 @@ cd interview-ai
 #### 2. Install dependencies
 
 **Using Poetry (recommended)**:
+
 ```bash
 poetry install
 ```
 
 **Using pip**:
+
 ```bash
 pip install -r requirements.txt
 ```
@@ -52,6 +54,7 @@ cp .env.example .env
 #### 4. Start the application
 
 **Local development**:
+
 ```bash
 # Backend
 poetry run uvicorn src.api.main:app --reload
@@ -63,12 +66,14 @@ cd frontend && npm install && npm run dev
 **Using Docker**:
 
 CPU version (macOS / Linux without GPU):
+
 ```bash
 cd docker
 docker-compose up api-cpu
 ```
 
 GPU version (Linux with NVIDIA GPU):
+
 ```bash
 cd docker
 docker-compose up api-gpu
@@ -78,12 +83,12 @@ docker-compose up api-gpu
 
 Key environment variables:
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `HF_TOKEN` | HuggingFace token for model access | - |
-| `DATABASE_URL` | Database connection string | `sqlite:///./data/interview_ai.db` |
-| `MODEL_CACHE_DIR` | Directory for cached models | `./models` |
-| `device` | Compute device: auto/cpu/cuda/mps | `auto` |
+| Variable          | Description                        | Default                            |
+| ----------------- | ---------------------------------- | ---------------------------------- |
+| `HF_TOKEN`        | HuggingFace token for model access | -                                  |
+| `DATABASE_URL`    | Database connection string         | `sqlite:///./data/interview_ai.db` |
+| `MODEL_CACHE_DIR` | Directory for cached models        | `./models`                         |
+| `device`          | Compute device: auto/cpu/cuda/mps  | `auto`                             |
 
 ## Project Structure
 
@@ -112,8 +117,9 @@ interview-ai/
 ## API Documentation
 
 Once running, visit:
-- Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
+
+- Swagger UI: <http://localhost:8000/docs>
+- ReDoc: <http://localhost:8000/redoc>
 
 ## Technology Stack
 
@@ -142,3 +148,4 @@ MIT License - see [LICENSE](LICENSE) file for details.
 - [FunASR](https://github.com/modelscope/FunASR) - Speech recognition
 - [pyannote](https://github.com/pyannote/pyannote-audio) - Speaker diarization
 - [Transformers](https://github.com/huggingface/transformers) - Emotion recognition
+

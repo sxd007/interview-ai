@@ -6,8 +6,10 @@ import numpy as np
 import torch
 
 from funasr import AutoModel
+from src.utils.pipeline_logger import get_pipeline_logger, pipeline_context
 
 logger = logging.getLogger(__name__)
+pipeline_log = get_pipeline_logger(__name__)
 
 
 EMOTION_TAG_MAP = {
@@ -157,19 +159,39 @@ class SenseVoiceEngine:
         self._total_duration: float = 0.0
 
     def _get_device(self, device: Optional[str]) -> str:
+        logger.info("[STT] SenseVoice引擎设备检测...")
+        
         if device:
+            logger.info(f"[STT] 使用指定设备: {device}")
             return device
+        
         if torch.cuda.is_available():
-            return "cuda:0"
+            device_str = "cuda:0"
+            gpu_name = torch.cuda.get_device_name(0)
+            logger.info(f"[STT] ✓ 检测到CUDA GPU: {gpu_name}")
+            logger.info(f"[STT] ✓ 选择设备: {device_str}")
+            return device_str
         elif torch.backends.mps.is_available():
-            return "mps"
-        return "cpu"
+            device_str = "mps"
+            logger.info("[STT] ✓ 检测到MPS设备 (Apple Silicon)")
+            logger.info(f"[STT] ✓ 选择设备: {device_str}")
+            return device_str
+        else:
+            logger.info("[STT] ✗ 未检测到GPU，使用CPU")
+            logger.info("[STT] ✓ 选择设备: cpu")
+            return "cpu"
 
     def load(self) -> None:
         if self.model is not None:
+            logger.info("[STT] 模型已加载，跳过重复加载")
             return
 
         device = self.device
+        logger.info(f"[STT] 开始加载SenseVoice模型...")
+        logger.info(f"[STT] 模型名称: {self.model_name}")
+        logger.info(f"[STT] 目标设备: {device}")
+        logger.info(f"[STT] VAD启用: {self.vad_enabled}")
+        logger.info(f"[STT] 说话人分离启用: {self.spk_enabled}")
 
         vad_kwargs = {}
         if self.vad_enabled:
@@ -185,6 +207,7 @@ class SenseVoiceEngine:
                 "punc_model": "ct-punc-c",
             }
 
+        logger.info("[STT] 初始化FunASR AutoModel...")
         self.model = AutoModel(
             model=self.model_name,
             device=device,
@@ -195,11 +218,16 @@ class SenseVoiceEngine:
             **vad_kwargs,
             **spk_kwargs,
         )
+        
+        logger.info("[STT] ✓ FunASR AutoModel初始化完成")
 
         if device == "cpu" and self.device == "mps":
             self._use_mps_fallback = True
+            logger.info("[STT] ✓ 使用MPS fallback模式")
         else:
             self._use_mps_fallback = False
+        
+        logger.info(f"[STT] ✓ 模型加载完成，设备: {device}")
 
     def unload(self) -> None:
         if self.model is not None:
@@ -215,26 +243,40 @@ class SenseVoiceEngine:
         use_itn: bool = True,
         word_timestamps: bool = False,
     ) -> Dict[str, Any]:
-        if self.model is None:
-            self.load()
+        with pipeline_context("stt", "语音转文字", device=self.device, logger=pipeline_log):
+            if self.model is None:
+                pipeline_log.log_model_load(self.model_name, self.device)
+                self.load()
 
-        lang = language if language != "auto" else self.language
+            lang = language if language != "auto" else self.language
 
-        self._total_duration = self._get_audio_duration(audio_path)
+            self._total_duration = self._get_audio_duration(audio_path)
+            
+            pipeline_log.log_progress(0, 100, f"音频时长: {self._total_duration:.2f}秒")
 
-        res = self.model.generate(
-            input=audio_path,
-            cache={},
-            language=lang,
-            use_itn=use_itn,
-            batch_size_s=300,
-            merge_vad=True,
-            merge_length_s=15,
-            output_timestamp=True,
-        )
+            res = self.model.generate(
+                input=audio_path,
+                cache={},
+                language=lang,
+                use_itn=use_itn,
+                batch_size_s=300,
+                merge_vad=True,
+                merge_length_s=15,
+                output_timestamp=True,
+            )
 
-        result = self._parse_result(res)
-        return result
+            result = self._parse_result(res)
+            
+            pipeline_log.log_stage_end(
+                "stt", "语音转文字", 0,
+                extra_info={
+                    "文本长度": len(result.get("text", "")),
+                    "片段数量": len(result.get("segments", [])),
+                    "检测语言": result.get("language", "unknown")
+                }
+            )
+            
+            return result
 
     def _get_audio_duration(self, audio_path: str) -> float:
         try:

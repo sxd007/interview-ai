@@ -12,10 +12,9 @@ import {
   EditOutlined, CheckCircleFilled, CloseCircleFilled,
   BarChartOutlined,
 } from '@ant-design/icons'
-import axios from 'axios'
+import api from '../services/api'
 
 const { Text } = Typography
-const api = axios.create({ baseURL: '/api', timeout: 600000 })
 
 interface ChunkData {
   id: string
@@ -98,10 +97,7 @@ export function PipelinePage() {
 
   const runAllChunksMutation = useMutation({
     mutationFn: () => 
-      api.post(`/interviews/${id}/process`, { 
-        chunk_enabled: true, 
-        chunk_duration: 600,
-      }),
+      api.post(`/interviews/${id}/reprocess-all`),
     onSuccess: () => {
       message.success('Chunk 处理已启动')
       queryClient.invalidateQueries({ queryKey: ['chunks', id] })
@@ -218,9 +214,18 @@ export function PipelinePage() {
         </Row>
       </Card>
 
-      {isChunked ? (
+      {chunks.length > 0 ? (
         <>
-          <Card title="Chunk 处理进度">
+          {!isChunked && (
+            <Alert
+              message="非分块模式"
+              description="该视频作为单个整体进行处理。"
+              type="info"
+              showIcon
+              style={{ marginBottom: 16 }}
+            />
+          )}
+          <Card title={isChunked ? "Chunk 处理进度" : "处理进度"}>
             <Space wrap style={{ width: '100%', gap: 12 }}>
               {chunks.map((chunk: any) => (
                 <Card
@@ -426,8 +431,8 @@ export function PipelinePage() {
       ) : (
         <Card>
           <Alert
-            message="非分块模式"
-            description="该视频未启用分块处理。切换到分块模式需要重新上传视频。"
+            message="暂无处理数据"
+            description="该视频尚未开始处理。请先点击「开始处理」按钮。"
             type="info"
             showIcon
           />

@@ -43,11 +43,33 @@ class Settings(BaseSettings):
     diarization_model: str = "pyannote-3.1"
 
     max_concurrent_tasks: int = 2
-    chunk_duration: int = 1800  # 30 minutes
+    chunk_duration: int = 1800
 
     redis_url: str = "redis://localhost:6379/0"
 
     allowed_origins: List[str] = ["http://localhost:3000", "http://localhost:5173"]
+
+    auth_username: str = "admin"
+    auth_password: str = "admin123"
+    jwt_secret_key: str = "your-super-secret-key-change-in-production"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 60 * 24
+
+    diarization_segmentation_onset: float = 0.3
+    diarization_segmentation_duration: float = 5.0
+    diarization_min_duration_off: float = 0.3
+    diarization_min_duration_on: float = 0.3
+    diarization_clustering_threshold: float = 0.715
+    diarization_min_cluster_size: int = 15
+    diarization_gap_threshold: float = 0.5
+    diarization_min_segment_duration: float = 0.5
+
+    stt_vad_enabled: bool = True
+    stt_spk_enabled: bool = False
+    stt_use_itn: bool = True
+    stt_batch_size_s: int = 300
+    stt_merge_vad: bool = True
+    stt_merge_length_s: int = 15
 
     @field_validator("allowed_origins", mode="before")
     @classmethod

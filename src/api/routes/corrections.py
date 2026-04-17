@@ -50,6 +50,20 @@ class SegmentEditRequest(BaseModel):
 class SegmentSplitRequest(BaseModel):
     segment_id: str
     split_time: float
+    speaker_id_1: str | None = None
+    speaker_id_2: str | None = None
+    text_1: str | None = None
+    text_2: str | None = None
+
+
+class SegmentSplitByTextRequest(BaseModel):
+    segment_id: str
+    split_text_position: int
+    speaker_id_1: str
+    speaker_id_2: str
+    time_ratio: float | None = None
+    text_1: str | None = None
+    text_2: str | None = None
 
 
 class SegmentMergeRequest(BaseModel):
@@ -209,15 +223,107 @@ def split_segment(
     if not interview:
         raise HTTPException(status_code=404, detail="Interview not found")
 
+    segment = db.query(AudioSegment).filter(
+        AudioSegment.id == req.segment_id,
+        AudioSegment.interview_id == interview_id,
+    ).first()
+    if not segment:
+        raise HTTPException(status_code=404, detail="Segment not found")
+
+    from src.services.pipeline.cascade_engine import apply_segment_split
+
+    segments = apply_segment_split(
+        db,
+        req.segment_id,
+        req.split_time,
+        speaker_id_1=req.speaker_id_1,
+        speaker_id_2=req.speaker_id_2,
+        text_1=req.text_1,
+        text_2=req.text_2,
+    )
+
     change = add_pending_change(
         db, interview_id,
         ChangeType.SEGMENT_EDIT,
-        {"segment_id": req.segment_id, "changes": {}},
+        {
+            "segment_id": req.segment_id,
+            "split_time": req.split_time,
+            "speaker_id_1": req.speaker_id_1,
+            "speaker_id_2": req.speaker_id_2,
+            "text_1": req.text_1,
+            "text_2": req.text_2,
+        },
         f"分裂段落于 {req.split_time:.1f}s",
     )
 
     summary = get_pending_changes_summary(db, interview_id)
-    return {"change_id": change.id, "pending_summary": summary}
+    return {
+        "change_id": change.id,
+        "pending_summary": summary,
+        "new_segment_id": segments[1].id if len(segments) > 1 else None,
+    }
+
+
+@router.post("/{interview_id}/corrections/split-segment-by-text")
+def split_segment_by_text(
+    interview_id: str,
+    req: SegmentSplitByTextRequest,
+    db: Session = Depends(get_db),
+):
+    interview = db.query(Interview).filter(Interview.id == interview_id).first()
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview not found")
+
+    segment = db.query(AudioSegment).filter(
+        AudioSegment.id == req.segment_id,
+        AudioSegment.interview_id == interview_id,
+    ).first()
+    if not segment:
+        raise HTTPException(status_code=404, detail="Segment not found")
+
+    from src.services.pipeline.cascade_engine import (
+        estimate_split_time_hybrid,
+        split_text_at_position,
+    )
+
+    text_1, text_2 = split_text_at_position(
+        segment.transcript or "",
+        req.split_text_position
+    )
+
+    if req.text_1:
+        text_1 = req.text_1
+    if req.text_2:
+        text_2 = req.text_2
+
+    if req.time_ratio is not None:
+        duration = segment.end_time - segment.start_time
+        split_time = segment.start_time + duration * req.time_ratio
+    else:
+        split_time = estimate_split_time_hybrid(segment, req.split_text_position)
+
+    change = add_pending_change(
+        db, interview_id,
+        ChangeType.SEGMENT_EDIT,
+        {
+            "segment_id": req.segment_id,
+            "split_time": split_time,
+            "speaker_id_1": req.speaker_id_1,
+            "speaker_id_2": req.speaker_id_2,
+            "text_1": text_1,
+            "text_2": text_2,
+        },
+        f"基于文本分割段落: {text_1[:20]}... | {text_2[:20]}...",
+    )
+
+    summary = get_pending_changes_summary(db, interview_id)
+    return {
+        "change_id": change.id,
+        "pending_summary": summary,
+        "estimated_split_time": split_time,
+        "text_1": text_1,
+        "text_2": text_2,
+    }
 
 
 @router.post("/{interview_id}/corrections/merge-segments")

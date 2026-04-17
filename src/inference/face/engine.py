@@ -7,6 +7,10 @@ import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
+from src.utils.pipeline_logger import get_pipeline_logger, pipeline_context
+
+pipeline_log = get_pipeline_logger(__name__)
+
 
 FACE_LANDMARKS = list(range(468))
 
@@ -68,6 +72,7 @@ FACE_EMOTION_KEY_LANDMARKS = {
 
 class FaceAnalysisEngine:
     DEFAULT_MODEL_PATH = os.path.expanduser("~/.cache/mediapipe/face_landmarker.task")
+    MODEL_DOWNLOAD_URL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
 
     def __init__(
         self,
@@ -75,17 +80,57 @@ class FaceAnalysisEngine:
         num_faces: int = 1,
         min_detection_confidence: float = 0.5,
         min_tracking_confidence: float = 0.5,
+        auto_download: bool = True,
     ):
         self.num_faces = num_faces
         self.min_detection_confidence = min_detection_confidence
         self.min_tracking_confidence = min_tracking_confidence
         self.model_path = model_path or self.DEFAULT_MODEL_PATH
+        self.auto_download = auto_download
+        
         if self.model_path and not os.path.exists(self.model_path):
-            self.model_path = None
+            if self.auto_download:
+                self._download_model()
+            else:
+                self.model_path = None
         self.model = None
+    
+    def _download_model(self):
+        import urllib.request
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        logger.info(f"MediaPipe model not found at {self.model_path}")
+        logger.info(f"Downloading from {self.MODEL_DOWNLOAD_URL}...")
+        
+        try:
+            os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
+            urllib.request.urlretrieve(self.MODEL_DOWNLOAD_URL, self.model_path)
+            logger.info(f"Successfully downloaded MediaPipe model to {self.model_path}")
+        except Exception as e:
+            logger.error(f"Failed to download MediaPipe model: {e}")
+            self.model_path = None
+            raise RuntimeError(
+                f"Failed to download MediaPipe face_landmarker.task model. "
+                f"Please download manually from:\n  {self.MODEL_DOWNLOAD_URL}\n"
+                f"And save it to:\n  {self.model_path}\n"
+                f"Or run: python scripts/download_models.py"
+            ) from e
 
     def _ensure_model(self):
         if self.model is None:
+            if not self.model_path:
+                raise RuntimeError(
+                    "MediaPipe face_landmarker.task model not found!\n"
+                    "The model file is required for face analysis.\n\n"
+                    "To fix this issue:\n"
+                    "1. Run: python scripts/download_models.py\n"
+                    "2. Or download manually from:\n"
+                    f"   {self.MODEL_DOWNLOAD_URL}\n"
+                    f"   And save to: {self.DEFAULT_MODEL_PATH}\n"
+                    "3. Or set auto_download=True when creating FaceAnalysisEngine"
+                )
+            
             base_options = python.BaseOptions(model_asset_path=self.model_path)
             options = vision.FaceLandmarkerOptions(
                 base_options=base_options,
@@ -129,35 +174,45 @@ class FaceAnalysisEngine:
     def detect_from_video(
         self, video_path: str, sample_rate: float = 2.0
     ) -> List[Dict[str, Any]]:
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            return []
+        with pipeline_context("face_analysis", "人脸分析", device="cpu", logger=pipeline_log):
+            cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                return []
 
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        interval = max(1, int(fps / sample_rate))
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            interval = max(1, int(fps / sample_rate))
 
-        results = []
-        frame_idx = 0
+            results = []
+            frame_idx = 0
 
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
 
-            if frame_idx % interval == 0:
-                timestamp = frame_idx / fps
-                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                face_data = self.detect(rgb_frame)
-                if face_data:
-                    face_data["timestamp"] = timestamp
-                    face_data["frame_idx"] = frame_idx
-                    results.append(face_data)
+                if frame_idx % interval == 0:
+                    timestamp = frame_idx / fps
+                    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    face_data = self.detect(rgb_frame)
+                    if face_data:
+                        face_data["timestamp"] = timestamp
+                        face_data["frame_idx"] = frame_idx
+                        results.append(face_data)
 
-            frame_idx += 1
+                frame_idx += 1
 
-        cap.release()
-        return results
+            cap.release()
+            
+            pipeline_log.log_stage_end(
+                "face_analysis", "人脸分析", 0,
+                extra_info={
+                    "检测到的帧数": len(results),
+                    "采样率": f"{sample_rate} fps"
+                }
+            )
+            
+            return results
 
     def _compute_action_units(
         self, landmarks: np.ndarray
@@ -320,6 +375,12 @@ class FaceAnalysisEngine:
 
 
 def get_face_engine(
-    model_path: Optional[str] = None, num_faces: int = 1
+    model_path: Optional[str] = None, 
+    num_faces: int = 1,
+    auto_download: bool = True,
 ) -> FaceAnalysisEngine:
-    return FaceAnalysisEngine(model_path=model_path, num_faces=num_faces)
+    return FaceAnalysisEngine(
+        model_path=model_path, 
+        num_faces=num_faces,
+        auto_download=auto_download,
+    )

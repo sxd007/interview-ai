@@ -1,24 +1,37 @@
 import os
+import logging
 from typing import Dict, Any, Optional, List
 import numpy as np
 
 import torch
 import librosa
 
+logger = logging.getLogger(__name__)
+
 
 EMOTION_LABELS = [
     "neutral", "happy", "sad", "angry",
-    "fearful", "disgust", "surprised", "anxious"
+    "fearful", "disgusted", "surprised"
 ]
 
-STRESS_KEY_EMOTIONS = {"anxious", "fearful", "angry", "sad"}
+EMOTION_LABEL_MAP = {
+    "NEUTRAL": "neutral",
+    "HAPPY": "happy",
+    "SAD": "sad",
+    "ANGRY": "angry",
+    "FEARFUL": "fearful",
+    "DISGUSTED": "disgusted",
+    "SURPRISED": "surprised",
+}
+
+STRESS_KEY_EMOTIONS = {"fearful", "angry", "sad"}
 CONFIDENCE_KEY_EMOTIONS = {"happy", "surprised", "neutral"}
 
 
 class VoiceEmotionEngine:
     def __init__(
         self,
-        model_name: str = "ehcalabres/wav2vec2-lg-xlsr-53-chinese-zh-arctic-emotion-detection",
+        model_name: str = "FunAudioLLM/SenseVoiceSmall",
         device: Optional[str] = None,
         cache_dir: Optional[str] = None,
     ):
@@ -29,29 +42,55 @@ class VoiceEmotionEngine:
         self.processor = None
 
     def _get_device(self, device: Optional[str]) -> str:
+        logger.info("[Emotion] 情绪识别引擎设备检测...")
+        
         if device:
+            logger.info(f"[Emotion] 使用指定设备: {device}")
             return device
+        
         if torch.cuda.is_available():
-            return "cuda"
+            device_str = "cuda:0"
+            gpu_name = torch.cuda.get_device_name(0)
+            logger.info(f"[Emotion] ✓ 检测到CUDA GPU: {gpu_name}")
+            logger.info(f"[Emotion] ✓ 选择设备: {device_str}")
+            return device_str
         elif torch.backends.mps.is_available():
-            return "mps"
-        return "cpu"
+            device_str = "mps"
+            logger.info("[Emotion] ✓ 检测到MPS设备 (Apple Silicon)")
+            logger.info(f"[Emotion] ✓ 选择设备: {device_str}")
+            return device_str
+        else:
+            logger.info("[Emotion] ✗ 未检测到GPU，使用CPU")
+            logger.info("[Emotion] ✓ 选择设备: cpu")
+            return "cpu"
 
     def load(self) -> None:
         if self.model is not None:
+            logger.info("[Emotion] 模型已加载，跳过重复加载")
             return
 
+        logger.info(f"[Emotion] 开始加载情绪识别模型...")
+        logger.info(f"[Emotion] 模型名称: {self.model_name}")
+        logger.info(f"[Emotion] 目标设备: {self.device}")
+
         try:
-            from transformers import Wav2Vec2ForSequenceClassification, Wav2Vec2Processor
-            self.processor = Wav2Vec2Processor.from_pretrained(
-                self.model_name, cache_dir=self.cache_dir
+            from funasr import AutoModel
+            
+            logger.info("[Emotion] 加载 SenseVoiceSmall 模型...")
+            self.model = AutoModel(
+                model=self.model_name,
+                device=self.device,
+                hub="hf",
+                disable_update=True,
             )
-            self.model = Wav2Vec2ForSequenceClassification.from_pretrained(
-                self.model_name, cache_dir=self.cache_dir
-            )
-            self.model.to(self.device)
-            self.model.eval()
+            self.processor = True  # 标记为已加载
+            
+            logger.info(f"[Emotion] ✓ 模型加载完成，设备: {self.device}")
+            
         except Exception as e:
+            logger.error(f"[Emotion] ✗ 模型加载失败: {e}")
+            import traceback
+            traceback.print_exc()
             self.model = None
             self.processor = None
 
@@ -71,7 +110,7 @@ class VoiceEmotionEngine:
             return self._fallback_analysis(audio_path)
 
         audio, sr = librosa.load(audio_path, sr=16000)
-        return self._predict_audio(audio, sr)
+        return self._predict_audio(audio, sr, audio_path)
 
     def predict_array(
         self, audio: np.ndarray, sample_rate: int = 16000
@@ -87,22 +126,33 @@ class VoiceEmotionEngine:
 
         return self._predict_audio(audio, 16000)
 
-    def _predict_audio(self, audio: np.ndarray, sr: int) -> Dict[str, Any]:
+    def _predict_audio(self, audio: np.ndarray, sr: int, audio_path: Optional[str] = None) -> Dict[str, Any]:
         try:
-            inputs = self.processor(
-                audio, sampling_rate=sr, return_tensors="pt", padding=True
+            from funasr.utils.postprocess_utils import rich_transcription_postprocess
+            
+            res = self.model.generate(
+                input=audio if audio_path is None else audio_path,
+                cache={},
+                language="auto",
+                use_itn=True,
+                batch_size_s=60,
             )
-            inputs = {k: v.to(self.device) for k, v in inputs.items()}
-
-            with torch.no_grad():
-                logits = self.model(**inputs).logits
-
-            probs = torch.softmax(logits, dim=-1).cpu().numpy()[0]
-            scores = {label: float(probs[i]) for i, label in enumerate(EMOTION_LABELS)}
-
-            dominant = max(scores, key=scores.get)
-            confidence = float(max(probs))
-
+            
+            if not res or len(res) == 0:
+                return self._fallback_analysis_array(audio, sr)
+            
+            text = res[0]["text"]
+            
+            emotion_label = self._extract_emotion(text)
+            
+            if emotion_label is None:
+                return self._fallback_analysis_array(audio, sr)
+            
+            scores = self._create_emotion_scores(emotion_label)
+            
+            dominant = emotion_label
+            confidence = scores[dominant]
+            
             stress_score = self._compute_stress(scores)
             confidence_score = self._compute_confidence(scores)
 
@@ -114,8 +164,31 @@ class VoiceEmotionEngine:
                 "confidence_score": confidence_score,
                 "is_stress": stress_score > 0.4,
             }
-        except Exception:
+        except Exception as e:
+            logger.error(f"[Emotion] 推理失败: {e}")
             return self._fallback_analysis_array(audio, sr)
+    
+    def _extract_emotion(self, text: str) -> Optional[str]:
+        """从 SenseVoiceSmall 输出中提取情绪标签"""
+        import re
+        emotion_pattern = r'<\|([A-Z]+)\|>'
+        matches = re.findall(emotion_pattern, text)
+        
+        for match in matches:
+            if match in EMOTION_LABEL_MAP:
+                return EMOTION_LABEL_MAP[match]
+        
+        return None
+    
+    def _create_emotion_scores(self, dominant_emotion: str) -> Dict[str, float]:
+        """创建情绪分数字典"""
+        scores = {label: 0.1 for label in EMOTION_LABELS}
+        scores[dominant_emotion] = 0.7
+        
+        total = sum(scores.values())
+        scores = {k: v / total for k, v in scores.items()}
+        
+        return scores
 
     def _fallback_analysis(self, audio_path: str) -> Dict[str, Any]:
         audio, sr = librosa.load(audio_path, sr=16000)
@@ -146,15 +219,14 @@ class VoiceEmotionEngine:
             "sad": 0.1,
             "angry": 0.1 + (0.2 if is_stress else 0.0),
             "fearful": 0.0 + (0.2 if is_stress else 0.0),
-            "disgust": 0.0,
+            "disgusted": 0.0,
             "surprised": 0.1,
-            "anxious": 0.0 + (0.2 if is_stress else 0.0),
         }
         total = sum(scores.values())
         scores = {k: v / total for k, v in scores.items()}
 
         return {
-            "dominant_emotion": "neutral" if not is_stress else "anxious",
+            "dominant_emotion": "neutral" if not is_stress else "fearful",
             "confidence": 0.4,
             "emotion_scores": scores,
             "stress_score": float(pitch_variation * 2),
@@ -180,7 +252,7 @@ class VoiceEmotionEngine:
         return results
 
     def _compute_stress(self, scores: Dict[str, float]) -> float:
-        stress_emotions = ["anxious", "fearful", "angry", "sad"]
+        stress_emotions = ["fearful", "angry", "sad"]
         return sum(scores.get(e, 0.0) for e in stress_emotions)
 
     def _compute_confidence(self, scores: Dict[str, float]) -> float:

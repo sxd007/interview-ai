@@ -1,19 +1,32 @@
 from contextlib import asynccontextmanager
 import os
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from src.core import settings
+
+model_cache_dir = Path(settings.model_cache_dir).resolve()
+model_cache_dir.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("MODELSCOPE_CACHE", str(model_cache_dir / "modelscope"))
+os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(model_cache_dir / "huggingface"))
+os.environ.setdefault("HF_HOME", str(model_cache_dir / "huggingface"))
+
 from src.models import init_db
 from src.api.routes import interviews_router, process_router, pipeline_router, corrections_router
+from src.api.routes.auth import router as auth_router
+from src.api.auth import get_current_user
 from src.services.voice_print.api import router as voice_print_router
 from src.utils.logging import setup_logging
 from src.utils.system_check import SystemChecker
 
-setup_logging(level=settings.log_level)
-logger = setup_logging(level=settings.log_level)
+log_dir = Path("logs")
+log_dir.mkdir(exist_ok=True)
+log_file = log_dir / "app.log"
+
+logger = setup_logging(level=settings.log_level, log_file=str(log_file))
 
 
 @asynccontextmanager
@@ -70,11 +83,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(interviews_router, prefix="/api")
-app.include_router(process_router, prefix="/api")
-app.include_router(pipeline_router, prefix="/api")
-app.include_router(corrections_router, prefix="/api")
-app.include_router(voice_print_router, prefix="/api")
+app.include_router(auth_router, prefix="/api")
+app.include_router(
+    interviews_router, prefix="/api", dependencies=[Depends(get_current_user)]
+)
+app.include_router(
+    process_router, prefix="/api", dependencies=[Depends(get_current_user)]
+)
+app.include_router(
+    pipeline_router, prefix="/api", dependencies=[Depends(get_current_user)]
+)
+app.include_router(
+    corrections_router, prefix="/api", dependencies=[Depends(get_current_user)]
+)
+app.include_router(
+    voice_print_router, prefix="/api", dependencies=[Depends(get_current_user)]
+)
 
 
 @app.get("/")

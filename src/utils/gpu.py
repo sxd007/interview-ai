@@ -21,26 +21,46 @@ def get_device(device: Optional[str] = None) -> str:
     Returns:
         Device string ('cuda', 'mps', or 'cpu')
     """
+    logger.info("[GPU] 开始检测GPU设备...")
+    
     if device and device != "auto":
+        logger.info(f"[GPU] 使用指定的设备配置: {device}")
         return device
     
     try:
         import torch
         
+        logger.info(f"[GPU] PyTorch版本: {torch.__version__}")
+        
         if torch.cuda.is_available():
             device_name = "cuda"
-            logger.info(f"Using CUDA device: {torch.cuda.get_device_name(0)}")
+            gpu_name = torch.cuda.get_device_name(0)
+            gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            gpu_count = torch.cuda.device_count()
+            cuda_version = torch.version.cuda
+            
+            logger.info(f"[GPU] ✓ CUDA可用")
+            logger.info(f"[GPU]   CUDA版本: {cuda_version}")
+            logger.info(f"[GPU]   GPU数量: {gpu_count}")
+            logger.info(f"[GPU]   GPU名称: {gpu_name}")
+            logger.info(f"[GPU]   GPU内存: {gpu_memory:.2f} GB")
+            logger.info(f"[GPU] ✓ 最终选择设备: {device_name}")
+            
             return device_name
         elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
             device_name = "mps"
-            logger.info("Using MPS device (Apple Silicon)")
+            logger.info("[GPU] ✓ MPS可用 (Apple Silicon)")
+            logger.info(f"[GPU] ✓ 最终选择设备: {device_name}")
             return device_name
         else:
-            logger.info("Using CPU device")
+            logger.info("[GPU] ✗ CUDA不可用")
+            logger.info("[GPU] ✗ MPS不可用")
+            logger.info("[GPU] ✓ 最终选择设备: cpu")
             return "cpu"
             
     except ImportError:
-        logger.warning("PyTorch not installed, defaulting to CPU")
+        logger.warning("[GPU] ✗ PyTorch未安装，使用CPU")
+        logger.info("[GPU] ✓ 最终选择设备: cpu")
         return "cpu"
 
 

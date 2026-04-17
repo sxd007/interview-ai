@@ -78,6 +78,7 @@ class Interview(Base):
     chunk_duration: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     chunk_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     is_chunked: Mapped[bool] = mapped_column(Boolean, default=False)
+    processing_config: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
     speakers: Mapped[List["Speaker"]] = relationship(back_populates="interview", cascade="all, delete-orphan")
     segments: Mapped[List["AudioSegment"]] = relationship(back_populates="interview", cascade="all, delete-orphan")
@@ -103,6 +104,7 @@ class VideoChunk(Base):
     audio_path: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     stt_raw_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     stt_raw_output: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    stt_engine_used: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     diarization_data: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     diarization_engine_used: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

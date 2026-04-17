@@ -21,6 +21,9 @@ from .schemas import (
     ProgressResponse,
     StatusResponse,
     HealthResponse,
+    DiarizationAdvancedConfig,
+    STTAdvancedConfig,
+    AdvancedConfigDefaults,
 )
 
 __all__ = [
@@ -46,4 +49,7 @@ __all__ = [
     "ProgressResponse",
     "StatusResponse",
     "HealthResponse",
+    "DiarizationAdvancedConfig",
+    "STTAdvancedConfig",
+    "AdvancedConfigDefaults",
 ]

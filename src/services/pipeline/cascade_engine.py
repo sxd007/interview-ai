@@ -291,35 +291,178 @@ def apply_segment_merge(
     return main_seg
 
 
+def estimate_by_char_ratio(
+    segment: AudioSegment,
+    split_position: int,
+) -> float:
+    """
+    基于字符比例估算时间分割点
+    
+    Args:
+        segment: 音频片段
+        split_position: 文本分割位置（字符索引）
+    
+    Returns:
+        估算的时间分割点
+    """
+    total_chars = len(segment.transcript or "")
+    if total_chars == 0:
+        return (segment.start_time + segment.end_time) / 2
+    
+    ratio = split_position / total_chars
+    duration = segment.end_time - segment.start_time
+    split_time = segment.start_time + duration * ratio
+    
+    epsilon = 0.001
+    split_time = max(segment.start_time + epsilon, min(split_time, segment.end_time - epsilon))
+    
+    return split_time
+
+
+def estimate_by_word_timestamps(
+    segment: AudioSegment,
+    split_position: int,
+    word_timestamps: List[Dict[str, Any]],
+) -> float:
+    """
+    基于词级时间戳估算时间分割点
+    
+    Args:
+        segment: 音频片段
+        split_position: 文本分割位置（字符索引）
+        word_timestamps: 词级时间戳列表
+    
+    Returns:
+        精确的时间分割点
+    """
+    if not word_timestamps:
+        return estimate_by_char_ratio(segment, split_position)
+    
+    char_count = 0
+    for word_info in word_timestamps:
+        word = word_info.get('word', '')
+        char_count += len(word)
+        if char_count >= split_position:
+            return word_info.get('start', segment.start_time)
+    
+    return segment.end_time
+
+
+def estimate_split_time_hybrid(
+    segment: AudioSegment,
+    split_position: int,
+    word_timestamps: Optional[List[Dict[str, Any]]] = None,
+) -> float:
+    """
+    混合方法估算时间分割点
+    
+    优先使用词级时间戳，否则使用字符比例法
+    
+    Args:
+        segment: 音频片段
+        split_position: 文本分割位置（字符索引）
+        word_timestamps: 可选的词级时间戳列表
+    
+    Returns:
+        时间分割点
+    """
+    if word_timestamps:
+        return estimate_by_word_timestamps(segment, split_position, word_timestamps)
+    else:
+        return estimate_by_char_ratio(segment, split_position)
+
+
+def split_text_at_position(
+    transcript: str,
+    position: int,
+) -> tuple[str, str]:
+    """
+    在指定位置分割文本，智能处理边界情况
+    
+    Args:
+        transcript: 原始文本
+        position: 分割位置
+    
+    Returns:
+        (text1, text2): 分割后的两段文本
+    """
+    if not transcript:
+        return "", ""
+    
+    position = max(0, min(position, len(transcript)))
+    
+    for offset in range(0, min(10, position)):
+        if position - offset > 0 and transcript[position - offset - 1] in '，。！？；：':
+            position = position - offset
+            break
+    
+    text1 = transcript[:position].strip()
+    text2 = transcript[position:].strip()
+    
+    return text1, text2
+
+
 def apply_segment_split(
     db: Session,
     segment_id: str,
     split_time: float,
+    speaker_id_1: Optional[str] = None,
+    speaker_id_2: Optional[str] = None,
+    text_1: Optional[str] = None,
+    text_2: Optional[str] = None,
 ) -> List[AudioSegment]:
     """
     Split one segment into two at split_time.
+    
+    Args:
+        db: 数据库会话
+        segment_id: 要分割的片段ID
+        split_time: 分割时间点
+        speaker_id_1: 第一部分的说话人ID（可选）
+        speaker_id_2: 第二部分的说话人ID（可选）
+        text_1: 第一部分的文本（可选）
+        text_2: 第二部分的文本（可选）
+    
+    Returns:
+        分割后的两个片段列表
     """
     segment = db.query(AudioSegment).filter(AudioSegment.id == segment_id).first()
     if not segment:
         raise ValueError(f"Segment {segment_id} not found")
 
+    epsilon = 0.001
+    split_time = max(segment.start_time + epsilon, min(split_time, segment.end_time - epsilon))
+    
     if not (segment.start_time < split_time < segment.end_time):
         raise ValueError(f"Split time {split_time} must be between {segment.start_time} and {segment.end_time}")
 
     segment.is_locked = True
     segment.corrected_at = datetime.utcnow()
 
+    if text_1 is None:
+        text_1 = segment.transcript
+    if text_2 is None:
+        text_2 = None
+
     new_segment = AudioSegment(
         id=str(uuid.uuid4()),
         interview_id=segment.interview_id,
-        speaker_id=segment.speaker_id,
+        chunk_id=segment.chunk_id,
+        speaker_id=speaker_id_2 if speaker_id_2 else segment.speaker_id,
         start_time=split_time,
         end_time=segment.end_time,
-        transcript=None,
+        transcript=text_2,
         lang=segment.lang,
         event=segment.event,
+        is_locked=True,
+        corrected_at=datetime.utcnow(),
     )
+    
     segment.end_time = split_time
+    if speaker_id_1:
+        segment.speaker_id = speaker_id_1
+    if text_1 is not None:
+        segment.transcript = text_1
 
     db.add(new_segment)
     db.commit()
@@ -391,8 +534,19 @@ def apply_all_pending_changes(
                 change_data["new_label"],
             )
         elif change_type == ChangeType.SEGMENT_EDIT:
-            result = {"segment_id": change_data["segment_id"]}
-            apply_segment_edit(db, change_data["segment_id"], change_data["changes"])
+            if "split_time" in change_data:
+                result = {"segments": [s.id for s in apply_segment_split(
+                    db,
+                    change_data["segment_id"],
+                    change_data["split_time"],
+                    speaker_id_1=change_data.get("speaker_id_1"),
+                    speaker_id_2=change_data.get("speaker_id_2"),
+                    text_1=change_data.get("text_1"),
+                    text_2=change_data.get("text_2"),
+                )]}
+            else:
+                result = {"segment_id": change_data["segment_id"]}
+                apply_segment_edit(db, change_data["segment_id"], change_data["changes"])
         elif change_type == ChangeType.SEGMENT_MERGE:
             result = apply_segment_merge(db, change_data["segment_ids"])
         elif change_type == ChangeType.SEGMENT_DELETE:
@@ -504,7 +658,8 @@ def get_pending_changes_summary(
         "changes": [
             {
                 "id": c.id,
-                "type": c.change_type,
+                "chunk_id": c.chunk_id,
+                "change_type": c.change_type,
                 "description": c.description,
                 "target_id": c.target_id,
                 "created_at": c.created_at.isoformat(),

@@ -29,6 +29,7 @@ from src.models.database import (
     AnnotationType,
     ApprovalStatus,
     EmotionNode,
+    ProcessingStatus,
 )
 from src.services.pipeline.stage_executor import (
     get_all_stages,
@@ -59,11 +60,23 @@ router = APIRouter(prefix="/interviews", tags=["pipeline"])
 
 @router.get("/{interview_id}/pipeline")
 def get_pipeline(interview_id: str, db: Session = Depends(get_db)):
+    '''
+    获取访谈的pipeline状态
+    :param interview_id: 访谈ID
+    :param db: 数据库会话
+    :return: 访谈的pipeline状态
+    
+    - 每个阶段的执行状态（PENDING/RUNNING/COMPLETED/ERROR）
+    - 是否可以运行（检查依赖）
+    - 待处理的变更摘要
+    '''
     interview = db.query(Interview).filter(Interview.id == interview_id).first()
     if not interview:
         raise HTTPException(status_code=404, detail="Interview not found")
 
+    # 根据访谈id获取状态列表
     stages = get_all_stages(db, interview_id)
+    # 根据访谈id获取所有待变更的清单（Dict
     pending_summary = get_pending_changes_summary(db, interview_id)
 
     stage_infos = []
@@ -154,6 +167,9 @@ def run_pipeline_stage(
             result = _run_emotion(db, interview)
         elif stage_name == "fusion":
             result = _run_fusion(db, interview)
+            interview.status = ProcessingStatus.COMPLETED.value
+            db.commit()
+            logger.info(f"[run_pipeline_stage] Interview {interview_id} marked as COMPLETED after fusion")
         else:
             raise HTTPException(status_code=400, detail=f"Stage '{stage_name}' not yet implemented")
 
@@ -322,6 +338,10 @@ def approve_chunk(
             diarization_stage.result_summary = {"all_chunks_reviewed": True}
 
         _unlock_deep_analysis_stages(db, interview_id)
+        
+        interview.status = ProcessingStatus.PROCESSING.value
+        interview.error_message = None
+        logger.info(f"All chunks reviewed for interview {interview_id}, deep analysis unlocked")
 
     db.commit()
 
@@ -397,22 +417,27 @@ def get_merge_status(
 
 def _run_audio_extract(db, interview, hf_token):
     import soundfile as sf
+    logger.info(f"[PIPELINE] Extracting audio start: time {datetime.utcnow()}")
     processor = AudioProcessor()
     audio_path, sr = processor.extract_audio(interview.file_path)
     info = sf.info(audio_path)
     interview.duration = float(info.frames) / float(info.samplerate)
     db.commit()
+    logger.info(f"[PIPELINE] Extracting audio end: time {datetime.utcnow()}")
     return {"audio_path": audio_path, "duration": interview.duration}
 
 
 def _run_denoise(db, interview, hf_token):
+    logger.info(f"[PIPELINE] Denoising audio start: time {datetime.utcnow()}")
     processor = AudioProcessor()
     audio_path = processor.extract_audio(interview.file_path)[0]
     denoised_path = processor.denoise(audio_path)
+    logger.info(f"[PIPELINE] Denoising audio end: time {datetime.utcnow()}")
     return {"denoised_path": denoised_path}
 
 
 def _run_diarization(db, interview, hf_token):
+    logger.info(f"[PIPELINE] Diarizing audio start: time {datetime.utcnow()}")
     processor = AudioProcessor()
     audio_path = processor.extract_audio(interview.file_path)[0]
     diarization_engine = DiarizationEngine(auth_token=hf_token)
@@ -444,13 +469,15 @@ def _run_diarization(db, interview, hf_token):
                 break
 
     db.commit()
+    logger.info(f"[PIPELINE] Diarizing audio end: time {datetime.utcnow()}")
     return {"speaker_count": len(speaker_order), "segments_affected": len(segments)}
 
 
 def _run_stt(db, interview, hf_token):
     processor = AudioProcessor()
     audio_path = processor.extract_audio(interview.file_path)[0]
-    stt = SenseVoiceEngine(device="cpu")
+    stt = SenseVoiceEngine(device=None)
+    logger.info(f"[PIPELINE] STT using device: {stt.device}, start: time {datetime.utcnow()}")
     stt.load()
     result = stt.transcribe(audio_path, language="auto", use_itn=True)
 

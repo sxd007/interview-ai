@@ -3,17 +3,18 @@ import { useNavigate } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Card, Typography, Upload, Space, message, Progress, Alert,
-  Switch, Tooltip, Divider, Button, Tag, Radio,
+  Switch, Tooltip, Divider, Button, Tag, Radio, Collapse, Slider, Select, InputNumber,
 } from 'antd'
 import {
   InboxOutlined, CheckCircleOutlined, VideoCameraOutlined,
-  ScissorOutlined, InfoCircleOutlined,
+  ScissorOutlined, InfoCircleOutlined, SettingOutlined,
 } from '@ant-design/icons'
 import type { UploadProps } from 'antd'
 import { interviewApi } from '../services/api'
 
 const { Title, Text, Paragraph } = Typography
 const { Dragger } = Upload
+const { Panel } = Collapse
 
 const formatDuration = (seconds: number) => {
   const h = Math.floor(seconds / 3600)
@@ -36,6 +37,48 @@ interface VideoInfo {
   size: number
 }
 
+interface DiarizationConfig {
+  segmentation_onset: number
+  segmentation_duration: number
+  min_duration_off: number
+  min_duration_on: number
+  clustering_threshold: number
+  min_cluster_size: number
+  gap_threshold: number
+  min_segment_duration: number
+}
+
+interface STTConfig {
+  language: string
+  use_itn: boolean
+  vad_enabled: boolean
+  spk_enabled: boolean
+  batch_size_s: number
+  merge_vad: boolean
+  merge_length_s: number
+}
+
+const defaultDiarizationConfig: DiarizationConfig = {
+  segmentation_onset: 0.3,
+  segmentation_duration: 5.0,
+  min_duration_off: 0.3,
+  min_duration_on: 0.3,
+  clustering_threshold: 0.715,
+  min_cluster_size: 15,
+  gap_threshold: 0.5,
+  min_segment_duration: 0.5,
+}
+
+const defaultSTTConfig: STTConfig = {
+  language: 'auto',
+  use_itn: true,
+  vad_enabled: true,
+  spk_enabled: false,
+  batch_size_s: 300,
+  merge_vad: true,
+  merge_length_s: 15,
+}
+
 export function UploadPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -46,7 +89,11 @@ export function UploadPage() {
   const [splitEnabled, setSplitEnabled] = useState(false)
   const [globalDiarization, setGlobalDiarization] = useState(false)
   const [diarizationEngine, setDiarizationEngine] = useState<'pyannote' | 'funasr'>('pyannote')
+  const [sttEngine, setSttEngine] = useState<'faster-whisper' | 'sensevoice'>('faster-whisper')
   const [processingStarted, setProcessingStarted] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [diarizationConfig, setDiarizationConfig] = useState<DiarizationConfig>(defaultDiarizationConfig)
+  const [sttConfig, setSTTConfig] = useState<STTConfig>(defaultSTTConfig)
 
   useEffect(() => {
     if (videoInfo) {
@@ -101,6 +148,23 @@ export function UploadPage() {
       uploadMutation.mutate(file)
       return false
     },
+  }
+
+  const handleStartProcess = () => {
+    const config: any = {
+      chunk_enabled: splitEnabled,
+      chunk_duration: 600,
+      speaker_diarization: globalDiarization,
+      diarization_engine: diarizationEngine,
+      stt_engine: sttEngine,
+    }
+    
+    if (showAdvanced) {
+      config.diarization_config = diarizationConfig
+      config.stt_config = sttConfig
+    }
+    
+    processMutation.mutate(config)
   }
 
   return (
@@ -204,9 +268,35 @@ export function UploadPage() {
             </div>
 
             <div style={{ marginBottom: 16 }}>
+              <div style={{ marginBottom: 8 }}>
+                <Text strong>
+                  <InfoCircleOutlined style={{ marginRight: 6 }} />
+                  语音转文字引擎
+                </Text>
+              </div>
+              <Radio.Group 
+                value={sttEngine} 
+                onChange={e => setSttEngine(e.target.value)}
+                optionType="button"
+                buttonStyle="solid"
+              >
+                <Radio.Button value="faster-whisper">Whisper (OpenAI)（推荐）</Radio.Button>
+                <Radio.Button value="sensevoice">FunASR (SenseVoice)</Radio.Button>
+              </Radio.Group>
+              <div style={{ marginTop: 6 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {sttEngine === 'faster-whisper' 
+                    ? '使用 OpenAI Whisper 模型进行语音识别，支持多语言，准确度高。'
+                    : '使用阿里 FunASR SenseVoice 模型，支持情绪识别等高级功能。'
+                  }
+                </Text>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
               <Space align="center">
                 <Switch checked={globalDiarization} onChange={setGlobalDiarization} />
-                <Tooltip title="在处理前先对整个视频进行说话人分离，确保说话人身份在所有 Chunk 间保持一致。需 GPU 加速，处理时间较长。">
+                <Tooltip title="在处理前先对整个视频进行说话人分离，确保说话人身份在所有 Chunk 间保持一致。适用于长视频分割处理场景。">
                   <Text strong>
                     全局说话人分离
                   </Text>
@@ -216,23 +306,205 @@ export function UploadPage() {
                 <Text type="secondary" style={{ fontSize: 12 }}>
                   {globalDiarization
                     ? '启用后将先对整个视频进行说话人识别，再处理各 Chunk。说话人身份跨 Chunk 一致，但处理时间较长。'
-                    : '默认每个 Chunk 独立进行说话人识别，处理更快，但不同 Chunk 间的说话人身份可能不同。'
+                    : '每个 Chunk 独立进行说话人识别（使用上方选择的引擎），处理更快，但不同 Chunk 间的说话人身份可能不同。'
                   }
                 </Text>
               </div>
             </div>
+
+            <Divider />
+
+            <Collapse 
+              activeKey={showAdvanced ? ['1'] : []}
+              onChange={(keys) => setShowAdvanced(keys.includes('1'))}
+              style={{ marginBottom: 16 }}
+            >
+              <Panel 
+                header={
+                  <Space>
+                    <SettingOutlined />
+                    <Text strong>高级选项</Text>
+                    <Tag color={showAdvanced ? 'blue' : 'default'}>
+                      {showAdvanced ? '已启用自定义参数' : '使用默认参数'}
+                    </Tag>
+                  </Space>
+                }
+                key="1"
+              >
+                <Alert 
+                  message="高级参数调整" 
+                  description="以下参数影响说话人分离和语音识别的质量。如不确定，建议保持默认值。"
+                  type="info" 
+                  showIcon 
+                  style={{ marginBottom: 16 }}
+                />
+
+                <Card size="small" title="说话人分离参数" style={{ marginBottom: 16 }}>
+                  <Space direction="vertical" style={{ width: '100%' }} size="middle">
+                    <div>
+                      <div style={{ marginBottom: 4 }}>
+                        <Tooltip title="值越低越容易检测到语音开始，但可能误检噪音。噪音环境建议提高到 0.4-0.5。">
+                          <Text>语音起始检测阈值 <InfoCircleOutlined style={{ color: '#999', marginLeft: 4 }} /></Text>
+                        </Tooltip>
+                      </div>
+                      <Slider
+                        min={0.1}
+                        max={0.9}
+                        step={0.05}
+                        value={diarizationConfig.segmentation_onset}
+                        onChange={(v) => setDiarizationConfig(prev => ({ ...prev, segmentation_onset: v }))}
+                        marks={{ 0.1: '0.1', 0.3: '默认', 0.5: '0.5', 0.9: '0.9' }}
+                      />
+                    </div>
+
+                    <div>
+                      <div style={{ marginBottom: 4 }}>
+                        <Tooltip title="值越高，越不容易将同一人分成多个说话人。同一人被拆分时建议提高到 0.75-0.85。">
+                          <Text>说话人聚类阈值 <InfoCircleOutlined style={{ color: '#999', marginLeft: 4 }} /></Text>
+                        </Tooltip>
+                      </div>
+                      <Slider
+                        min={0.5}
+                        max={0.9}
+                        step={0.05}
+                        value={diarizationConfig.clustering_threshold}
+                        onChange={(v) => setDiarizationConfig(prev => ({ ...prev, clustering_threshold: v }))}
+                        marks={{ 0.5: '0.5', 0.715: '默认', 0.85: '0.85', 0.9: '0.9' }}
+                      />
+                    </div>
+
+                    <div>
+                      <div style={{ marginBottom: 4 }}>
+                        <Tooltip title="值越大，越不容易产生虚假说话人。说话人数量过多时建议提高到 20-30。">
+                          <Text>最小聚类样本数 <InfoCircleOutlined style={{ color: '#999', marginLeft: 4 }} /></Text>
+                        </Tooltip>
+                      </div>
+                      <InputNumber
+                        min={5}
+                        max={50}
+                        value={diarizationConfig.min_cluster_size}
+                        onChange={(v) => setDiarizationConfig(prev => ({ ...prev, min_cluster_size: v || 15 }))}
+                        style={{ width: '100%' }}
+                      />
+                    </div>
+
+                    <div>
+                      <div style={{ marginBottom: 4 }}>
+                        <Tooltip title="小于此值的片段会被过滤掉。短句丢失时建议降低到 0.15-0.2。">
+                          <Text>说话片段最小长度(秒) <InfoCircleOutlined style={{ color: '#999', marginLeft: 4 }} /></Text>
+                        </Tooltip>
+                      </div>
+                      <Slider
+                        min={0.1}
+                        max={1.0}
+                        step={0.05}
+                        value={diarizationConfig.min_duration_on}
+                        onChange={(v) => setDiarizationConfig(prev => ({ ...prev, min_duration_on: v }))}
+                        marks={{ 0.1: '0.1', 0.3: '默认', 0.5: '0.5', 1.0: '1.0' }}
+                      />
+                    </div>
+
+                    <div>
+                      <div style={{ marginBottom: 4 }}>
+                        <Tooltip title="同一说话人间隙小于此值会被合并。碎片化严重时建议提高到 0.8-1.0。">
+                          <Text>后处理合并间隙阈值(秒) <InfoCircleOutlined style={{ color: '#999', marginLeft: 4 }} /></Text>
+                        </Tooltip>
+                      </div>
+                      <Slider
+                        min={0.1}
+                        max={2.0}
+                        step={0.1}
+                        value={diarizationConfig.gap_threshold}
+                        onChange={(v) => setDiarizationConfig(prev => ({ ...prev, gap_threshold: v }))}
+                        marks={{ 0.1: '0.1', 0.5: '默认', 1.0: '1.0', 2.0: '2.0' }}
+                      />
+                    </div>
+                  </Space>
+                </Card>
+
+                <Card size="small" title="语音转文字参数">
+                  <Space direction="vertical" style={{ width: '100%' }} size="middle">
+                    <div>
+                      <div style={{ marginBottom: 4 }}>
+                        <Tooltip title="指定语言可提高识别准确率。中文访谈建议选择 'zh'。">
+                          <Text>识别语言 <InfoCircleOutlined style={{ color: '#999', marginLeft: 4 }} /></Text>
+                        </Tooltip>
+                      </div>
+                      <Select
+                        value={sttConfig.language}
+                        onChange={(v) => setSTTConfig(prev => ({ ...prev, language: v }))}
+                        style={{ width: '100%' }}
+                        options={[
+                          { value: 'auto', label: '自动检测' },
+                          { value: 'zh', label: '中文' },
+                          { value: 'en', label: '英文' },
+                          { value: 'ja', label: '日文' },
+                          { value: 'ko', label: '韩文' },
+                        ]}
+                      />
+                    </div>
+
+                    <div>
+                      <div style={{ marginBottom: 4 }}>
+                        <Tooltip title="将'一百二十三'转为'123'等。正式报告建议开启。">
+                          <Text>逆文本标准化 <InfoCircleOutlined style={{ color: '#999', marginLeft: 4 }} /></Text>
+                        </Tooltip>
+                      </div>
+                      <Switch
+                        checked={sttConfig.use_itn}
+                        onChange={(v) => setSTTConfig(prev => ({ ...prev, use_itn: v }))}
+                      />
+                    </div>
+
+                    <div>
+                      <div style={{ marginBottom: 4 }}>
+                        <Tooltip title="自动过滤静音段，提高效率。长静音段落建议开启。">
+                          <Text>语音活动检测(VAD) <InfoCircleOutlined style={{ color: '#999', marginLeft: 4 }} /></Text>
+                        </Tooltip>
+                      </div>
+                      <Switch
+                        checked={sttConfig.vad_enabled}
+                        onChange={(v) => setSTTConfig(prev => ({ ...prev, vad_enabled: v }))}
+                      />
+                    </div>
+
+                    <div>
+                      <div style={{ marginBottom: 4 }}>
+                        <Tooltip title="降低内存占用，适合低配机器。高配机器可提高到 400-500。">
+                          <Text>批处理时长(秒) <InfoCircleOutlined style={{ color: '#999', marginLeft: 4 }} /></Text>
+                        </Tooltip>
+                      </div>
+                      <InputNumber
+                        min={60}
+                        max={600}
+                        value={sttConfig.batch_size_s}
+                        onChange={(v) => setSTTConfig(prev => ({ ...prev, batch_size_s: v || 300 }))}
+                        style={{ width: '100%' }}
+                      />
+                    </div>
+                  </Space>
+                </Card>
+
+                <div style={{ marginTop: 12 }}>
+                  <Button 
+                    size="small" 
+                    onClick={() => {
+                      setDiarizationConfig(defaultDiarizationConfig)
+                      setSTTConfig(defaultSTTConfig)
+                    }}
+                  >
+                    重置为默认值
+                  </Button>
+                </div>
+              </Panel>
+            </Collapse>
 
             {!processingStarted ? (
               <Button
                 type="primary"
                 size="large"
                 icon={<VideoCameraOutlined />}
-                onClick={() => processMutation.mutate({
-                  chunk_enabled: splitEnabled,
-                  chunk_duration: 600,
-                  speaker_diarization: globalDiarization,
-                  diarization_engine: diarizationEngine,
-                })}
+                onClick={handleStartProcess}
                 loading={processMutation.isPending}
                 block
               >
